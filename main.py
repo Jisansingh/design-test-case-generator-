@@ -1,9 +1,13 @@
-from fastapi import FastAPI, HTTPException
-from schemas import DesignInput, TestCases
-from llm_service import generate_test_cases
-import json
+import logging
 
-# Create the FastAPI app instance
+from fastapi import FastAPI, HTTPException
+
+from llm_service import generate_test_cases
+from schemas import DesignInput, TestCases
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger(__name__)
+
 app = FastAPI(
     title="AI Test Generator API",
     description="Generate software test cases from design descriptions using Groq AI",
@@ -13,7 +17,6 @@ app = FastAPI(
 
 @app.get("/")
 def root():
-    """Health-check endpoint."""
     return {"status": "ok", "message": "AI Test Generator is running"}
 
 
@@ -23,21 +26,19 @@ def generate_tests(request: DesignInput):
     Accept a design description and return AI-generated test cases
     grouped into functional, edge_cases, and security categories.
     """
-    try:
-        result = generate_test_cases(request.design)
-        # Validate the response has the expected keys
-        return TestCases(
-            functional=result.get("functional", []),
-            edge_cases=result.get("edge_cases", []),
-            security=result.get("security", []),
-        )
-    except (json.JSONDecodeError, KeyError, TypeError) as e:
+    if not request.design.strip():
+        raise HTTPException(status_code=400, detail="Design description cannot be empty")
+
+    log.info("Generating tests for: %s", request.design)
+
+    result = generate_test_cases(request.design)
+
+    # If all three arrays are empty, the LLM likely failed
+    total = len(result["functional"]) + len(result["edge_cases"]) + len(result["security"])
+    if total == 0:
         raise HTTPException(
-            status_code=500,
-            detail=f"Failed to parse LLM response: {str(e)}",
+            status_code=502,
+            detail="AI model returned empty response. Please try again with a more detailed design description.",
         )
-    except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Internal server error: {str(e)}",
-        )
+
+    return TestCases(**result)
