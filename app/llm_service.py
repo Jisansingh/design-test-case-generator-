@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from difflib import SequenceMatcher
 
 from dotenv import load_dotenv
 from groq import Groq
@@ -9,9 +10,6 @@ load_dotenv()
 
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-# Controls how creative vs predictable the output is.
-# Lower = more consistent, Higher = more varied.
-# 0.5 is a good balance for test generation.
 TEMPERATURE = 0.5
 
 SYSTEM_PROMPT = """
@@ -50,71 +48,54 @@ Output:
 
 
 def _clean_json_str(raw: str) -> str:
-    """
-    Clean up common LLM JSON issues before parsing:
-    - Markdown code fences
-    - Leading/trailing text around JSON
-    - Stringified JSON (LLM wraps JSON in a string)
-    - Single quotes used as string delimiters
-    - Trailing commas
-    """
     text = raw.strip()
 
-    # Handle stringified JSON (e.g., '"{...}"' or "'{...}'")
     if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
         try:
             text = json.loads(text)
         except (json.JSONDecodeError, TypeError):
             pass
 
-    # Strip markdown code fences (```json ... ```)
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if match:
         text = match.group(1).strip()
 
-    # Find the first { and last } to extract the JSON object
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
     else:
-        # LLM sometimes returns a bare array instead of object
         start = text.find("[")
         end = text.rfind("]")
         if start != -1 and end != -1 and end > start:
             text = text[start : end + 1]
 
-    # Remove trailing commas before closing braces/brackets
     text = re.sub(r",\s*([}\]])", r"\1", text)
 
-    # Try parsing as-is first — this handles the common case
     try:
         json.loads(text)
         return text
     except json.JSONDecodeError:
         pass
 
-    # If parsing still fails, try converting single-quote delimiters to double quotes.
-    # This only runs after the first parse attempt failed, so we know the JSON is
-    # already invalid. The replacement fixes LLMs that use ' instead of ".
     text = text.replace("'", '"')
 
     return text
 
 
+def _is_similar(a: str, b: str, threshold: float = 0.8) -> bool:
+    """Return True if two strings are similar (e.g. "wrong password" ≈ "incorrect password")."""
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio() > threshold
+
+
 def _as_strings(items: list, max_items: int = 7) -> list:
-    """
-    Convert mixed LLM output into a clean list of unique strings.
-    Handles both flat strings and objects with description/test_name keys.
-    """
-    seen = set()
+    seen = []
     out = []
 
     for item in items:
         if len(out) >= max_items:
             break
 
-        # Extract text from string or dict
         if isinstance(item, str):
             text = item.strip()
         elif isinstance(item, dict):
@@ -122,28 +103,24 @@ def _as_strings(items: list, max_items: int = 7) -> list:
         else:
             continue
 
-        # Skip empty or duplicate
-        if not text or text.lower() in seen:
+        if not text:
             continue
 
-        seen.add(text.lower())
+        # Fuzzy dedup: skip if too similar to any existing item
+        dup = any(_is_similar(text, s) for s in seen)
+        if dup:
+            continue
+
+        seen.append(text)
         out.append(text)
 
     return out
 
 
 def _validate_structure(data) -> dict:
-    """
-    Ensure the parsed JSON has the expected three keys,
-    each being a list of strings. Fill in missing keys with [].
-
-    Also handles the edge case where the LLM returns a flat array
-    (treats all items as functional tests).
-    """
     keys = ["functional", "edge_cases", "security"]
     result = {}
 
-    # Handle top-level array (LLM returns [...] instead of {...})
     if isinstance(data, list):
         result["functional"] = _as_strings(data)
         result["edge_cases"] = []
@@ -162,10 +139,6 @@ def _validate_structure(data) -> dict:
 
 
 def generate_test_cases(design: str) -> dict:
-    """
-    Send design to Groq, extract JSON, validate structure.
-    Retries once if parsing fails.
-    """
     user_prompt = f"Design: {design}"
 
     def _call_llm() -> str:
@@ -179,7 +152,6 @@ def generate_test_cases(design: str) -> dict:
         )
         return resp.choices[0].message.content
 
-    # Try up to 2 times
     for attempt in range(2):
         raw = _call_llm()
 
@@ -189,6 +161,4 @@ def generate_test_cases(design: str) -> dict:
             return _validate_structure(data)
         except (json.JSONDecodeError, TypeError, ValueError):
             if attempt == 1:
-                # Final attempt failed — return empty structure instead of crashing
                 return {"functional": [], "edge_cases": [], "security": []}
-            # First attempt failed — try again

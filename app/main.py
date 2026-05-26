@@ -2,8 +2,8 @@ import logging
 
 from fastapi import FastAPI, HTTPException
 
-from llm_service import generate_test_cases
-from schemas import DesignInput, TestCases
+from app.llm_service import generate_test_cases
+from app.schemas import DesignInput, TestCases
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -22,10 +22,6 @@ def root():
 
 @app.post("/generate-tests", response_model=TestCases)
 def generate_tests(request: DesignInput):
-    """
-    Accept a design description and return AI-generated test cases
-    grouped into functional, edge_cases, and security categories.
-    """
     if not request.design.strip():
         raise HTTPException(status_code=400, detail="Design description cannot be empty")
 
@@ -33,7 +29,6 @@ def generate_tests(request: DesignInput):
 
     result = generate_test_cases(request.design)
 
-    # If all three arrays are empty, the LLM likely failed
     total = len(result["functional"]) + len(result["edge_cases"]) + len(result["security"])
     if total == 0:
         raise HTTPException(
