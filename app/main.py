@@ -1,12 +1,11 @@
 import logging
-
 from fastapi import FastAPI, HTTPException
-
 from app.llm_service import generate_test_cases
 from app.schemas import DesignInput, TestCases
 
+# Standard basic logging configuration
 logging.basicConfig(level=logging.INFO)
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="AI Test Generator API",
@@ -22,18 +21,22 @@ def root():
 
 @app.post("/generate-tests", response_model=TestCases)
 def generate_tests(request: DesignInput):
+    # Input Validation
     if not request.design.strip():
         raise HTTPException(status_code=400, detail="Design description cannot be empty")
 
-    log.info("Generating tests for: %s", request.design)
+    logger.info(f"Generating tests for design description starting with: {request.design[:50]}...")
 
+    # Call the service layer
     result = generate_test_cases(request.design)
 
-    total = len(result["functional"]) + len(result["edge_cases"]) + len(result["security"])
-    if total == 0:
+    # Validate that we actually got tests back
+    total_cases = len(result["functional"]) + len(result["edge_cases"]) + len(result["security"])
+    if total_cases == 0:
         raise HTTPException(
             status_code=502,
             detail="AI model returned empty response. Please try again with a more detailed design description.",
         )
 
-    return TestCases(**result)
+    # FastAPI will automatically validate and parse this dictionary into the TestCases schema
+    return result

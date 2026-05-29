@@ -2,14 +2,16 @@ import json
 import os
 import re
 from difflib import SequenceMatcher
-
 from dotenv import load_dotenv
 from groq import Groq
 
+# Load environment variables (API keys, etc.)
 load_dotenv()
 
+# Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
+# Controls the creativity level of the LLM output
 TEMPERATURE = 0.5
 
 SYSTEM_PROMPT = """
@@ -48,98 +50,52 @@ Output:
 
 
 def _clean_json_str(raw: str) -> str:
+    """
+    Cleans up the raw LLM output to make it safely parseable by json.loads().
+    Handles common LLM quirks: markdown blocks, leading/trailing text, and trailing commas.
+    """
     text = raw.strip()
 
-    if (text.startswith('"') and text.endswith('"')) or (text.startswith("'") and text.endswith("'")):
-        try:
-            text = json.loads(text)
-        except (json.JSONDecodeError, TypeError):
-            pass
+    # 1. Strip markdown code fences if present (e.g. ```json ... ```)
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            # Remove optional 'json' identifier
+            if part.startswith("json"):
+                part = part[4:].strip()
+            # Extract the actual JSON block
+            if part.startswith("{") and part.endswith("}"):
+                text = part
+                break
 
-    match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-    if match:
-        text = match.group(1).strip()
-
+    # 2. Extract contents between first '{' and last '}' to strip conversational text
     start = text.find("{")
     end = text.rfind("}")
     if start != -1 and end != -1 and end > start:
         text = text[start : end + 1]
-    else:
-        start = text.find("[")
-        end = text.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
 
+    # 3. Strip trailing commas inside arrays or objects (Python's json.loads is very strict about this)
     text = re.sub(r",\s*([}\]])", r"\1", text)
-
-    try:
-        json.loads(text)
-        return text
-    except json.JSONDecodeError:
-        pass
-
-    text = text.replace("'", '"')
 
     return text
 
 
 def _is_similar(a: str, b: str, threshold: float = 0.8) -> bool:
-    """Return True if two strings are similar (e.g. "wrong password" ≈ "incorrect password")."""
+    """
+    Checks if two test descriptions are lexically similar to prevent redundancy.
+    Example: 'wrong password' vs 'incorrect password' -> returns True
+    """
     return SequenceMatcher(None, a.lower(), b.lower()).ratio() > threshold
 
 
-def _as_strings(items: list, max_items: int = 7) -> list:
-    seen = []
-    out = []
-
-    for item in items:
-        if len(out) >= max_items:
-            break
-
-        if isinstance(item, str):
-            text = item.strip()
-        elif isinstance(item, dict):
-            text = (item.get("description") or item.get("test_name") or item.get("name") or "").strip()
-        else:
-            continue
-
-        if not text:
-            continue
-
-        # Fuzzy dedup: skip if too similar to any existing item
-        dup = any(_is_similar(text, s) for s in seen)
-        if dup:
-            continue
-
-        seen.append(text)
-        out.append(text)
-
-    return out
-
-
-def _validate_structure(data) -> dict:
-    keys = ["functional", "edge_cases", "security"]
-    result = {}
-
-    if isinstance(data, list):
-        result["functional"] = _as_strings(data)
-        result["edge_cases"] = []
-        result["security"] = []
-        return result
-
-    for key in keys:
-        val = data.get(key, [])
-
-        if not isinstance(val, list):
-            val = []
-
-        result[key] = _as_strings(val)
-
-    return result
-
-
 def generate_test_cases(design: str) -> dict:
+    """
+    Communicates with the Groq API to generate categorized software test cases.
+    Retries once if a JSON parsing error occurs.
+    """
     user_prompt = f"Design: {design}"
+    result = {"functional": [], "edge_cases": [], "security": []}
 
     def _call_llm() -> str:
         resp = client.chat.completions.create(
@@ -152,13 +108,42 @@ def generate_test_cases(design: str) -> dict:
         )
         return resp.choices[0].message.content
 
+    # Attempt generation with a retry block for robust error handling
     for attempt in range(2):
-        raw = _call_llm()
-
         try:
-            cleaned = _clean_json_str(raw)
-            data = json.loads(cleaned)
-            return _validate_structure(data)
-        except (json.JSONDecodeError, TypeError, ValueError):
+            raw_output = _call_llm()
+            cleaned_json = _clean_json_str(raw_output)
+            data = json.loads(cleaned_json)
+
+            # Structure validation and fuzzy deduplication
+            keys = ["functional", "edge_cases", "security"]
+            for key in keys:
+                val = data.get(key, [])
+                if not isinstance(val, list):
+                    val = []
+
+                # Clean strings & filter duplicates
+                seen = []
+                for item in val:
+                    if isinstance(item, str):
+                        cleaned_item = item.strip()
+                    elif isinstance(item, dict):
+                        # Extract description/name fields if the LLM output returns objects
+                        cleaned_item = (item.get("description") or item.get("test_name") or item.get("name") or "").strip()
+                    else:
+                        continue
+
+                    # Fuzzy check: skip if too similar to any existing item in categories
+                    if cleaned_item and not any(_is_similar(cleaned_item, s) for s in seen):
+                        seen.append(cleaned_item)
+
+                # Limit to 7 items max per category as specified by prompt limits
+                result[key] = seen[:7]
+
+            return result
+
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
+            # If it fails on first try, let's retry. If second fails, return default gracefully.
             if attempt == 1:
+                print(f"Error generating test cases on retry attempt: {e}")
                 return {"functional": [], "edge_cases": [], "security": []}
