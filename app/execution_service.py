@@ -7,4 +7,13 @@ def execute_test_cases(test_cases):
             "status": "PASS"
         })
 
-    return results
+    summary = {
+        "total": len(results),
+        "passed": len(results),
+        "failed": 0
+    }
+
+    return {
+        "results": results,
+        "summary": summary
+    }
