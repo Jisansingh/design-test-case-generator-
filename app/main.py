@@ -2,7 +2,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from app.llm_service import generate_test_cases
 from app.schemas import DesignInput, TestCases
-from app.execution_service import execute_test_cases
+from app.execution_service import execute_test_cases, generate_text_report
 # Standard basic logging configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -43,17 +43,43 @@ def generate_tests(request: DesignInput):
 
 @app.post("/execute-tests")
 def execute_tests(request: DesignInput):
-
-    # Generate test cases first
+    # Generate test cases using the LLM
     generated = generate_test_cases(request.design)
 
-    # Execute all generated test cases
-    all_tests = (
-        generated["functional"]
-        + generated["edge_cases"]
-        + generated["security"]
+    # Pull out each category of tests
+    functional_tests = generated["functional"]
+    edge_cases_tests = generated["edge_cases"]
+    security_tests = generated["security"]
+
+    # Pass each category separately so the report stays organized
+    execution_result = execute_test_cases(
+        functional_tests,
+        edge_cases_tests,
+        security_tests
     )
 
-    execution_result = execute_test_cases(all_tests)
-
     return execution_result
+
+
+@app.post("/generate-report")
+def generate_report(request: DesignInput):
+    # Step 1: Generate test cases using the LLM
+    generated = generate_test_cases(request.design)
+
+    # Step 2: Pull out each category of tests
+    functional_tests = generated["functional"]
+    edge_cases_tests = generated["edge_cases"]
+    security_tests = generated["security"]
+
+    # Step 3: Execute all the test cases
+    execution_result = execute_test_cases(
+        functional_tests,
+        edge_cases_tests,
+        security_tests
+    )
+
+    # Step 4: Convert the execution result into a plain text report
+    report_text = generate_text_report(execution_result)
+
+    # Step 5: Return the report as JSON
+    return {"report": report_text}
