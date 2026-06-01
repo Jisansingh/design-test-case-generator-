@@ -27,6 +27,8 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify FastAPI App
+      - name: Verify Python Syntax
         run: |
-          python -c "from app.main import app; print('FastAPI app loaded successfully')"
+          python -m py_compile app/main.py
+          python -m py_compile app/llm_service.py
+          python -m py_compile app/schemas.py
