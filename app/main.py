@@ -40,3 +40,20 @@ def generate_tests(request: DesignInput):
 
     # FastAPI will automatically validate and parse this dictionary into the TestCases schema
     return result
+
+@app.post("/execute-tests")
+def execute_tests(request: DesignInput):
+
+    # Generate test cases first
+    generated = generate_test_cases(request.design)
+
+    # Execute all generated test cases
+    all_tests = (
+        generated["functional"]
+        + generated["edge_cases"]
+        + generated["security"]
+    )
+
+    execution_result = execute_test_cases(all_tests)
+
+    return execution_result
