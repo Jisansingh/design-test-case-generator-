@@ -1,5 +1,7 @@
 import logging
+import tempfile
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from app.llm_service import generate_test_cases
 from app.schemas import DesignInput, TestCases
 from app.execution_service import execute_test_cases, generate_text_report
@@ -83,3 +85,41 @@ def generate_report(request: DesignInput):
 
     # Step 5: Return the report as JSON
     return {"report": report_text}
+
+
+@app.post("/download-report")
+def download_report(request: DesignInput):
+    # Step 1: Generate test cases using the LLM
+    generated = generate_test_cases(request.design)
+
+    # Step 2: Pull out each category of tests
+    functional_tests = generated["functional"]
+    edge_cases_tests = generated["edge_cases"]
+    security_tests = generated["security"]
+
+    # Step 3: Execute all the test cases
+    execution_result = execute_test_cases(
+        functional_tests,
+        edge_cases_tests,
+        security_tests
+    )
+
+    # Step 4: Generate the plain text report
+    report_text = generate_text_report(execution_result)
+
+    # Step 5: Write the report to a temporary .txt file
+    # Using delete=False so the file stays around for FileResponse to read
+    temp_file = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        delete=False
+    )
+    temp_file.write(report_text)
+    temp_file.close()
+
+    # Step 6: Return the file as a download
+    return FileResponse(
+        path=temp_file.name,
+        media_type="text/plain",
+        filename="report.txt"
+    )
