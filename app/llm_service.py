@@ -147,3 +147,89 @@ def generate_test_cases(design: str) -> dict:
             if attempt == 1:
                 print(f"Error generating test cases on retry attempt: {e}")
                 return {"functional": [], "edge_cases": [], "security": []}
+
+
+CODE_GENERATION_PROMPT = """
+You are a senior frontend developer. Generate a single-file React component based on the given design description.
+
+Rules:
+- Output ONLY valid JavaScript/JSX code wrapped in a single markdown code block with the language label "jsx".
+- Use React functional components with basic hooks (useState, useEffect) only.
+- Do NOT use TypeScript.
+- Do NOT include multiple files or folder structures.
+- Do NOT include explanations before or after the code block.
+- Include only the component code — no import for React is needed (assume it's available).
+- Style using inline styles or a simple CSS object — avoid external CSS imports.
+- Keep the component self-contained and beginner-friendly.
+
+Example output for "A counter button that increments on click":
+```jsx
+function Counter() {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div style={{ textAlign: 'center', padding: '20px' }}>
+      <h1>Count: {count}</h1>
+      <button onClick={() => setCount(count + 1)}>Increment</button>
+    </div>
+  );
+}
+
+export default Counter;
+```
+"""
+
+
+def _extract_code_block(raw: str) -> str:
+    """
+    Extracts code from a markdown code block. Returns the raw string
+    if no markdown fences are found.
+    """
+    text = raw.strip()
+
+    if "```" in text:
+        parts = text.split("```")
+        for part in parts:
+            part = part.strip()
+            # Skip empty parts and language labels
+            if not part or part.startswith("jsx") or part.startswith("javascript") or part.startswith("js"):
+                continue
+            # Take the first substantial code block
+            if len(part) > 20:
+                return part
+
+    return text
+
+
+def generate_code(design: str) -> dict:
+    """
+    Communicates with the Groq API to generate a React component
+    based on a design description. Returns a dict with language and code keys.
+    """
+    user_prompt = f"Design: {design}"
+
+    def _call_llm() -> str:
+        resp = client.chat.completions.create(
+            model="llama-3.1-8b-instant",
+            messages=[
+                {"role": "system", "content": CODE_GENERATION_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=TEMPERATURE,
+        )
+        return resp.choices[0].message.content
+
+    for attempt in range(2):
+        try:
+            raw_output = _call_llm()
+            code = _extract_code_block(raw_output)
+
+            if not code.strip():
+                raise ValueError("Empty code generated")
+
+            return {"language": "javascript", "code": code.strip()}
+
+        except Exception as e:
+            if attempt == 1:
+                print(f"Error generating code on retry attempt: {e}")
+                return {"language": "javascript", "code": "// Code generation failed. Please try again with a more detailed description."}

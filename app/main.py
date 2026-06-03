@@ -1,9 +1,10 @@
 import logging
 import tempfile
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from app.llm_service import generate_test_cases
-from app.schemas import DesignInput, TestCases
+from app.llm_service import generate_test_cases, generate_code
+from app.schemas import DesignInput, TestCases, CodeGenOutput
 from app.execution_service import execute_test_cases, generate_text_report
 # Standard basic logging configuration
 logging.basicConfig(level=logging.INFO)
@@ -13,6 +14,17 @@ app = FastAPI(
     title="AI Test Generator API",
     description="Generate software test cases from design descriptions using Groq AI",
     version="1.0.0",
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5175",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -42,6 +54,24 @@ def generate_tests(request: DesignInput):
 
     # FastAPI will automatically validate and parse this dictionary into the TestCases schema
     return result
+
+@app.post("/generate-code", response_model=CodeGenOutput)
+def generate_code_endpoint(request: DesignInput):
+    if not request.design.strip():
+        raise HTTPException(status_code=400, detail="Design description cannot be empty")
+
+    logger.info(f"Generating code for design description starting with: {request.design[:50]}...")
+
+    result = generate_code(request.design)
+
+    if not result["code"].strip():
+        raise HTTPException(
+            status_code=502,
+            detail="AI model returned empty response. Please try again with a more detailed design description.",
+        )
+
+    return result
+
 
 @app.post("/execute-tests")
 def execute_tests(request: DesignInput):

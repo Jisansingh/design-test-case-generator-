@@ -12,5 +12,10 @@ class TestCases(BaseModel):
     security: List[str]
 
 
+class CodeGenOutput(BaseModel):
+    language: str
+    code: str
+
+
 class ErrorResponse(BaseModel):
     detail: str
