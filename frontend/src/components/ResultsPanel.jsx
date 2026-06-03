@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import './ResultsPanel.css'
 
 function TestCategory({ title, tests, executed }) {
@@ -27,7 +28,6 @@ function TestCategory({ title, tests, executed }) {
 
 function ExecutionSummary({ summary }) {
   if (!summary) return null
-
   const passedPct = summary.total > 0 ? Math.round((summary.passed / summary.total) * 100) : 0
 
   return (
@@ -53,6 +53,74 @@ function ExecutionSummary({ summary }) {
   )
 }
 
+function PipelineSteps({ generatedCode, testResults, executionResults, reportText }) {
+  const steps = [
+    { key: 'code', label: 'Code', done: !!generatedCode },
+    { key: 'tests', label: 'Tests', done: !!testResults },
+    { key: 'execute', label: 'Execute', done: !!executionResults },
+    { key: 'report', label: 'Report', done: !!reportText },
+  ]
+
+  return (
+    <div className="pipeline">
+      {steps.map((step, i) => (
+        <span key={step.key} className={`pipeline-step${step.done ? ' pipeline-step--done' : ''}`}>
+          <span className="pipeline-step-icon">
+            {step.done ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            ) : (
+              <span className="pipeline-step-dot" />
+            )}
+          </span>
+          <span className="pipeline-step-label">{step.label}</span>
+          {i < steps.length - 1 && <span className="pipeline-connector" />}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+function TabBar({ tabs, activeTab, onTabChange }) {
+  return (
+    <div className="tab-bar">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          className={`tab-btn${activeTab === tab.id ? ' tab-btn--active' : ''}`}
+          onClick={() => onTabChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function cleanCode(code) {
+  if (!code) return ''
+  return code
+    .replace(/^```\w*\s*\n/gm, '')
+    .replace(/\n```\s*$/gm, '')
+    .trim()
+}
+
+function cleanReport(report) {
+  if (!report) return ''
+  return report
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim()
+      if (/^[=\-]{5,}$/.test(t)) return false
+      if (/END OF REPORT/i.test(t)) return false
+      return true
+    })
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
 function ResultsPanel({
   generatedCode,
   testResults,
@@ -63,16 +131,28 @@ function ResultsPanel({
   execError,
   reportError,
   phase,
+  designDescription,
   isDownloading,
   onDownloadReport,
 }) {
+  const [activeTab, setActiveTab] = useState('code')
+
+  const tabs = []
+  if (generatedCode) tabs.push({ id: 'code', label: 'Code' })
+  if (executionResults) tabs.push({ id: 'tests', label: 'Tests' })
+  if (reportText) tabs.push({ id: 'report', label: 'Report' })
+
+  if (tabs.length > 0 && !tabs.find((t) => t.id === activeTab)) {
+    setActiveTab(tabs[0].id)
+  }
+
   if (phase === 'generating-code') {
     return (
-      <section className="panel panel-right">
-        <div className="placeholder">
-          <div className="placeholder-icon"><span className="spinner-lg" /></div>
-          <h2 className="placeholder-title">Generating Code...</h2>
-          <p className="placeholder-text">The AI is writing React code based on your design description.</p>
+      <section className="results-area">
+        <div className="loading-state">
+          <span className="spinner-lg" />
+          <h2 className="loading-title">Generating Code...</h2>
+          <p className="loading-text">The AI is writing React code based on your design description.</p>
         </div>
       </section>
     )
@@ -80,17 +160,20 @@ function ResultsPanel({
 
   if (phase === 'generating-tests') {
     return (
-      <section className="panel panel-right">
-        <div className="results-content">
-          {generatedCode && (
-            <div className="code-section">
-              <h2 className="results-section-title">Generated Code</h2>
-              <pre className="code-block">{generatedCode.code}</pre>
+      <section className="results-area">
+        <div className="results-scroll">
+          <div className="code-card">
+            <div className="code-card-header">
+              <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
+              <span className="code-card-label">generated-code.jsx</span>
             </div>
-          )}
-          <div className="placeholder-inline">
-            <span className="spinner-lg" />
-            <p className="placeholder-text">Generating test cases for the code...</p>
+            <pre className="code-card-content">{cleanCode(generatedCode.code)}</pre>
+          </div>
+          <div className="loading-inline">
+            <span className="spinner-sm" />
+            <span>Generating test cases for the code...</span>
           </div>
         </div>
       </section>
@@ -99,25 +182,26 @@ function ResultsPanel({
 
   if (phase === 'executing-tests') {
     return (
-      <section className="panel panel-right">
-        <div className="results-content">
-          {generatedCode && (
-            <div className="code-section">
-              <h2 className="results-section-title">Generated Code</h2>
-              <pre className="code-block">{generatedCode.code}</pre>
+      <section className="results-area">
+        <div className="results-scroll">
+          <div className="code-card">
+            <div className="code-card-header">
+              <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
+              <span className="code-card-label">generated-code.jsx</span>
             </div>
-          )}
-          {testResults && (
-            <div className="tests-section">
-              <h2 className="results-section-title">Generated Tests</h2>
-              <TestCategory title="Functional Tests" tests={testResults.functional} />
-              <TestCategory title="Edge Cases" tests={testResults.edge_cases} />
-              <TestCategory title="Security Tests" tests={testResults.security} />
-            </div>
-          )}
-          <div className="placeholder-inline">
-            <span className="spinner-lg" />
-            <p className="placeholder-text">Executing test cases...</p>
+            <pre className="code-card-content">{cleanCode(generatedCode.code)}</pre>
+          </div>
+          <div className="tests-section">
+            <h2 className="section-title">Generated Tests</h2>
+            <TestCategory title="Functional Tests" tests={testResults.functional} />
+            <TestCategory title="Edge Cases" tests={testResults.edge_cases} />
+            <TestCategory title="Security Tests" tests={testResults.security} />
+          </div>
+          <div className="loading-inline">
+            <span className="spinner-sm" />
+            <span>Executing test cases...</span>
           </div>
         </div>
       </section>
@@ -126,137 +210,141 @@ function ResultsPanel({
 
   if (phase === 'generating-report') {
     return (
-      <section className="panel panel-right">
-        <div className="results-content">
-          {generatedCode && (
-            <div className="code-section">
-              <h2 className="results-section-title">Generated Code</h2>
-              <pre className="code-block">{generatedCode.code}</pre>
+      <section className="results-area">
+        <div className="results-scroll">
+          <div className="code-card">
+            <div className="code-card-header">
+              <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
+              <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
+              <span className="code-card-label">generated-code.jsx</span>
             </div>
-          )}
-          {testResults && (
-            <div className="tests-section">
-              <h2 className="results-section-title">Generated Tests</h2>
-              <TestCategory title="Functional Tests" tests={testResults.functional} />
-              <TestCategory title="Edge Cases" tests={testResults.edge_cases} />
-              <TestCategory title="Security Tests" tests={testResults.security} />
-            </div>
-          )}
-          {executionResults && (
-            <>
-              <h2 className="results-section-title">Execution Results</h2>
-              <ExecutionSummary summary={executionResults.summary} />
-              <TestCategory title="Functional Tests" tests={executionResults.functional} executed />
-              <TestCategory title="Edge Cases" tests={executionResults.edge_cases} executed />
-              <TestCategory title="Security Tests" tests={executionResults.security} executed />
-            </>
-          )}
-          <div className="placeholder-inline">
-            <span className="spinner-lg" />
-            <p className="placeholder-text">Generating report...</p>
+            <pre className="code-card-content">{cleanCode(generatedCode.code)}</pre>
+          </div>
+          <ExecutionSummary summary={executionResults.summary} />
+          <div className="tests-section">
+            <h2 className="section-title">Test Results</h2>
+            <TestCategory title="Functional Tests" tests={executionResults.functional} executed />
+            <TestCategory title="Edge Cases" tests={executionResults.edge_cases} executed />
+            <TestCategory title="Security Tests" tests={executionResults.security} executed />
+          </div>
+          <div className="loading-inline">
+            <span className="spinner-sm" />
+            <span>Generating report...</span>
           </div>
         </div>
       </section>
     )
   }
 
-  if (codeError) {
+  if (codeError && !generatedCode) {
     return (
-      <section className="panel panel-right">
-        <div className="placeholder">
-          <div className="placeholder-icon error-icon">
-            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+      <section className="results-area">
+        <div className="error-state">
+          <div className="error-icon-large">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10" />
               <line x1="12" y1="8" x2="12" y2="12" />
               <line x1="12" y1="16" x2="12.01" y2="16" />
             </svg>
           </div>
-          <h2 className="placeholder-title error-title">Code Generation Failed</h2>
-          <p className="placeholder-text error-text">{codeError}</p>
+          <h2 className="error-state-title">Code Generation Failed</h2>
+          <p className="error-state-text">{codeError}</p>
         </div>
       </section>
     )
   }
 
-  if (generatedCode) {
+  if (tabs.length > 0) {
     return (
-      <section className="panel panel-right">
-        <div className="results-content">
-          {generatedCode && (
-            <div className="code-section">
-              <h2 className="results-section-title">Generated Code</h2>
-              <pre className="code-block">{generatedCode.code}</pre>
-            </div>
-          )}
+      <section className="results-area">
+        <PipelineSteps
+          generatedCode={generatedCode}
+          testResults={testResults}
+          executionResults={executionResults}
+          reportText={reportText}
+        />
 
-          {testError && (
-            <div className="error-banner">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              <span>Tests failed: {testError}</span>
-            </div>
-          )}
+        <div className="prompt-card">
+          <span className="prompt-card-label">Prompt</span>
+          <p className="prompt-card-text">{designDescription}</p>
+        </div>
 
-          {testResults && !executionResults && (
+        <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
+
+        {activeTab === 'code' && (
+          <div className="tab-pane">
+            <div className="code-card code-card--full">
+              <div className="code-card-header">
+                <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
+                <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
+                <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
+                <span className="code-card-label">generated-code.jsx</span>
+              </div>
+              <pre className="code-card-content">{cleanCode(generatedCode.code)}</pre>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'tests' && (
+          <div className="results-scroll">
+            <ExecutionSummary summary={executionResults.summary} />
+
+            {testError && (
+              <div className="error-banner">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>Tests failed: {testError}</span>
+              </div>
+            )}
+
+            {execError && (
+              <div className="error-banner">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>Execution failed: {execError}</span>
+              </div>
+            )}
+
             <div className="tests-section">
-              <h2 className="results-section-title">Generated Tests</h2>
-              <TestCategory title="Functional Tests" tests={testResults.functional} />
-              <TestCategory title="Edge Cases" tests={testResults.edge_cases} />
-              <TestCategory title="Security Tests" tests={testResults.security} />
-            </div>
-          )}
-
-          {execError && (
-            <div className="error-banner">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              <span>Execution failed: {execError}</span>
-            </div>
-          )}
-
-          {executionResults && (
-            <>
-              <h2 className="results-section-title">Execution Results</h2>
-              <ExecutionSummary summary={executionResults.summary} />
               <TestCategory title="Functional Tests" tests={executionResults.functional} executed />
               <TestCategory title="Edge Cases" tests={executionResults.edge_cases} executed />
               <TestCategory title="Security Tests" tests={executionResults.security} executed />
-            </>
-          )}
-
-          {reportError && (
-            <div className="error-banner">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="12" y1="8" x2="12" y2="12" />
-                <line x1="12" y1="16" x2="12.01" y2="16" />
-              </svg>
-              <span>Report failed: {reportError}</span>
             </div>
-          )}
+          </div>
+        )}
 
-          {reportText && (
-            <div className="report-section">
-              <h2 className="results-section-title">Generated Report</h2>
-              <pre className="report-block">{reportText}</pre>
+        {activeTab === 'report' && (
+          <div className="tab-pane">
+            {reportError && (
+              <div className="error-banner">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>Report failed: {reportError}</span>
+              </div>
+            )}
+
+            <div className="report-card report-card--full">
+              <pre className="report-content">{cleanReport(reportText)}</pre>
             </div>
-          )}
 
-          <div className="results-footer">
             <button
-              className="btn btn-secondary"
-              disabled={!reportText || isDownloading}
+              className="download-btn"
+              disabled={isDownloading}
               onClick={onDownloadReport}
             >
               {isDownloading ? (
-                <span className="btn-loading">
-                  <span className="spinner" />
+                <span className="download-btn-loading">
+                  <span className="spinner-sm" />
                   Downloading...
                 </span>
               ) : (
@@ -270,28 +358,24 @@ function ResultsPanel({
                 </>
               )}
             </button>
-            {!reportText && <p className="results-hint">Report will be available once generated</p>}
           </div>
-        </div>
+        )}
       </section>
     )
   }
 
   return (
-    <section className="panel panel-right">
-      <div className="placeholder">
-        <div className="placeholder-icon">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M9 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="9 2 9 8 15 8" />
-            <line x1="12" y1="12" x2="12" y2="18" />
-            <circle cx="12" cy="12" r="2" />
-            <path d="M9 18h6" />
+    <section className="results-area">
+      <div className="empty-state">
+        <div className="empty-state-icon">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="16 18 22 12 16 6" />
+            <polyline points="8 6 2 12 8 18" />
           </svg>
         </div>
-        <h2 className="placeholder-title">No Test Cases Yet</h2>
-        <p className="placeholder-text">
-          Describe your design in the left panel and click <strong>Generate &amp; Run Tests</strong> to get started.
+        <h2 className="empty-state-title">Generate Code & Tests</h2>
+        <p className="empty-state-text">
+          Describe your design in the input below and press <strong>Enter</strong> to generate code, tests, and a report.
         </p>
       </div>
     </section>
