@@ -307,6 +307,6 @@ This repository contains the **backend API only**. Any frontend or client applic
 
 ## Contributors
 
-- **Jisan Singh** — Intern developer
+- **Jisan Singh** 
 
 ---
