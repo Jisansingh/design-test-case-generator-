@@ -3,9 +3,11 @@ import tempfile
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from app.llm_service import generate_test_cases, generate_code
-from app.schemas import DesignInput, TestCases, CodeGenOutput
+from app.llm_service import generate_test_cases, generate_code, detect_language
+from app.schemas import DesignInput, TestCases, CodeGenOutput, CrashAnalysisOutput, CrashReportInput, CrashReportOutput
 from app.execution_service import execute_test_cases, generate_text_report
+from app.crash_service import simulate_crash
+from app.crash_ai_service import analyze_backtrace
 # Standard basic logging configuration
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,14 +57,17 @@ def generate_tests(request: DesignInput):
     # FastAPI will automatically validate and parse this dictionary into the TestCases schema
     return result
 
-@app.post("/generate-code", response_model=CodeGenOutput)
+@app.post("/generate-code", response_model=CodeGenOutput, response_model_exclude_none=True)
 def generate_code_endpoint(request: DesignInput):
     if not request.design.strip():
         raise HTTPException(status_code=400, detail="Design description cannot be empty")
 
     logger.info(f"Generating code for design description starting with: {request.design[:50]}...")
 
-    result = generate_code(request.design)
+    try:
+        result = generate_code(request.design, request.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     if not result["code"].strip():
         raise HTTPException(
@@ -71,6 +76,33 @@ def generate_code_endpoint(request: DesignInput):
         )
 
     return result
+
+
+@app.post("/analyze-crash-report", response_model=CrashReportOutput)
+def analyze_crash_report(request: CrashReportInput):
+    if not request.backtrace:
+        raise HTTPException(status_code=400, detail="Backtrace cannot be empty")
+
+    logger.info(f"Analyzing backtrace with {len(request.backtrace)} frames...")
+    result = analyze_backtrace(request.backtrace)
+    return result
+
+
+@app.post("/analyze-crash", response_model=CrashAnalysisOutput)
+def analyze_crash():
+    logger.info("Running crash simulation and backtrace analysis...")
+    try:
+        result = simulate_crash()
+        logger.info(f"Crash analysis complete: {len(result['backtrace'])} frames")
+        return result
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Crash analysis failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Crash analysis failed. Ensure g++ and lldb are installed.",
+        )
 
 
 @app.post("/execute-tests")

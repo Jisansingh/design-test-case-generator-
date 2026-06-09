@@ -149,7 +149,15 @@ def generate_test_cases(design: str) -> dict:
                 return {"functional": [], "edge_cases": [], "security": []}
 
 
-CODE_GENERATION_PROMPT = """
+SUPPORTED_LANGUAGES = {"c", "cpp", "python", "java", "javascript", "react"}
+
+FRONTEND_KEYWORDS = [
+    "frontend", "react", "ui", "dashboard", "webpage", "website",
+    "login page", "signup page", "component", "form",
+]
+
+LANGUAGE_PROMPTS = {
+    "react": """
 You are a senior frontend developer. Generate a single-file React component based on the given design description.
 
 Rules:
@@ -177,59 +185,320 @@ function Counter() {
 
 export default Counter;
 ```
+""",
+    "python": """
+You are a senior Python developer. Generate Python code based on the given design description.
+
+Rules:
+- Output ONLY valid Python code wrapped in a single markdown code block with the language label "python".
+- Use Python's standard library only (no external packages like requests, numpy, etc.).
+- Write clean, well-structured code with helpful comments where needed.
+- Include a main() function with a if __name__ == "__main__": guard.
+- Use descriptive variable and function names.
+- Prefer simple, readable solutions over complex optimizations.
+- Use functions for reusable logic; use classes only when they make sense.
+- Do NOT include explanations before or after the code block.
+
+Example output for "A program that greets the user":
+```python
+def greet(name):
+    return f"Hello, {name}! Welcome to the program."
+
+def main():
+    user_name = input("Enter your name: ")
+    message = greet(user_name)
+    print(message)
+
+if __name__ == "__main__":
+    main()
+```
+""",
+    "javascript": """
+You are a senior JavaScript developer. Generate JavaScript code based on the given design description.
+
+Rules:
+- Output ONLY valid JavaScript code wrapped in a single markdown code block with the language label "javascript".
+- Use modern JavaScript (ES6+) — arrow functions, const/let, template literals, etc.
+- Do NOT use TypeScript.
+- Do NOT include HTML or CSS unless the design specifically asks for it.
+- Write clean, well-structured code with helpful comments where needed.
+- Use functions for reusable logic.
+- Keep the code beginner-friendly and self-contained.
+- Do NOT include explanations before or after the code block.
+
+Example output for "A function that filters even numbers from an array":
+```javascript
+function filterEvenNumbers(numbers) {
+  return numbers.filter(num => num % 2 === 0);
+}
+
+const numbers = [1, 2, 3, 4, 5, 6];
+const evens = filterEvenNumbers(numbers);
+console.log("Even numbers:", evens);
+```
+""",
+    "c": """
+You are a senior C developer. Generate C code based on the given design description.
+
+Rules:
+- Output ONLY valid C code wrapped in a single markdown code block with the language label "c".
+- Use standard C libraries only (stdio.h, stdlib.h, string.h, math.h, etc.).
+- Write clean, well-structured code with helpful comments where needed.
+- Include a main() function that demonstrates the functionality.
+- Use descriptive variable and function names.
+- Prefer simple, readable solutions over complex optimizations.
+- Handle memory carefully (malloc/free where appropriate).
+- Do NOT include explanations before or after the code block.
+
+Example output for "A program that calculates the factorial of a number":
+```c
+#include <stdio.h>
+
+int factorial(int n) {
+    if (n <= 1) return 1;
+    return n * factorial(n - 1);
+}
+
+int main() {
+    int num = 5;
+    printf("Factorial of %d is %d\\n", num, factorial(num));
+    return 0;
+}
+```
+""",
+    "cpp": """
+You are a senior C++ developer. Generate C++ code based on the given design description.
+
+Rules:
+- Output ONLY valid C++ code wrapped in a single markdown code block with the language label "cpp".
+- Use standard C++ libraries (iostream, string, vector, algorithm, etc.).
+- Write clean, well-structured code with helpful comments where needed.
+- Include a main() function that demonstrates the functionality.
+- Use descriptive variable and function names.
+- Prefer simple, readable solutions over complex optimizations.
+- Use modern C++ features (e.g., auto, range-based for loops) where appropriate.
+- Do NOT include explanations before or after the code block.
+
+Example output for "A program that stores and displays a list of students":
+```cpp
+#include <iostream>
+#include <vector>
+#include <string>
+
+using namespace std;
+
+struct Student {
+    string name;
+    int grade;
+};
+
+int main() {
+    vector<Student> students = {{"Alice", 85}, {"Bob", 92}};
+
+    for (const auto& s : students) {
+        cout << s.name << ": " << s.grade << endl;
+    }
+
+    return 0;
+}
+```
+""",
+    "java": """
+You are a senior Java developer. Generate Java code based on the given design description.
+
+Rules:
+- Output ONLY valid Java code wrapped in a single markdown code block with the language label "java".
+- Use standard Java libraries only (java.util, java.io, java.math, etc.).
+- Write clean, well-structured code with helpful comments where needed.
+- Include a public class with a main() method that demonstrates the functionality.
+- Use descriptive variable, method, and class names.
+- Prefer simple, readable solutions over complex optimizations.
+- Follow Java naming conventions (camelCase methods, PascalCase classes).
+- Do NOT include explanations before or after the code block.
+
+Example output for "A program that finds the largest number in an array":
+```java
+import java.util.Arrays;
+
+public class LargestNumber {
+    public static int findLargest(int[] numbers) {
+        int largest = numbers[0];
+        for (int num : numbers) {
+            if (num > largest) {
+                largest = num;
+            }
+        }
+        return largest;
+    }
+
+    public static void main(String[] args) {
+        int[] numbers = {3, 7, 2, 9, 5};
+        System.out.println("Largest: " + findLargest(numbers));
+    }
+}
+```
+""",
+}
+
+
+GTEST_PROMPT = """
+You are a senior C++ developer writing Google Test unit tests. Given a C++ implementation and the original design description, write comprehensive GTest test cases.
+
+Rules:
+- Output ONLY valid C++ code wrapped in a single markdown code block with the label "cpp".
+- Use #include <gtest/gtest.h>
+- Use TEST() macro to organize test cases
+- Use EXPECT_EQ(), EXPECT_TRUE(), EXPECT_FALSE() for assertions
+- Cover functional (happy path) test cases
+- Cover edge cases (empty inputs, boundaries, invalid inputs)
+- Use descriptive test case names
+- Do NOT include a main() function (assume gtest_main is linked)
+- Write clean code with helpful comments where needed
+- Keep tests beginner-friendly and readable
+
+Example GTest structure:
+```cpp
+#include <gtest/gtest.h>
+#include "calculator.h"
+
+TEST(CalculatorTest, AddTwoNumbers) {
+    EXPECT_EQ(add(2, 3), 5);
+}
+
+TEST(CalculatorTest, AddWithZero) {
+    EXPECT_EQ(add(0, 5), 5);
+    EXPECT_EQ(add(0, 0), 0);
+}
+```
 """
+
+
+def detect_language(design: str, language: str = None) -> str:
+    """
+    Determines the programming language for code generation.
+
+    If a language is explicitly provided, it is validated against supported languages.
+    If no language is provided, the design description is analyzed for frontend-related keywords
+    to decide between React (for UI descriptions) and C++ (for everything else).
+    """
+    if language:
+        lang = language.strip().lower()
+        if lang not in SUPPORTED_LANGUAGES:
+            raise ValueError(
+                f"Unsupported language: '{language}'. "
+                f"Supported languages: {', '.join(sorted(SUPPORTED_LANGUAGES))}"
+            )
+        return lang
+
+    design_lower = design.lower()
+    for keyword in FRONTEND_KEYWORDS:
+        if keyword in design_lower:
+            return "react"
+
+    return "cpp"
+
+
+def build_code_prompt(design: str, language: str) -> tuple:
+    """
+    Builds the system and user prompts for code generation based on the target language.
+    Returns (system_prompt, user_prompt).
+    """
+    system_prompt = LANGUAGE_PROMPTS[language]
+    user_prompt = f"Design: {design}"
+    return system_prompt, user_prompt
+
+
+def _generate_gtest_code(design: str, implementation_code: str) -> str:
+    """
+    Generates Google Test code for a given C++ implementation using the Groq API.
+    """
+    user_prompt = (
+        f"Design: {design}\n\n"
+        f"C++ Implementation:\n"
+        f"```cpp\n{implementation_code}\n```\n\n"
+        f"Write comprehensive GTest unit tests for this implementation."
+    )
+
+    for attempt in range(2):
+        try:
+            resp = client.chat.completions.create(
+                model="llama-3.1-8b-instant",
+                messages=[
+                    {"role": "system", "content": GTEST_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=TEMPERATURE,
+            )
+            raw_output = resp.choices[0].message.content
+            gtest_code = _extract_code_block(raw_output)
+            if gtest_code.strip():
+                return gtest_code.strip()
+        except Exception as e:
+            if attempt == 1:
+                print(f"Error generating GTest code: {e}")
+                return "// GTest code generation failed."
+
+    return "// GTest code generation failed."
 
 
 def _extract_code_block(raw: str) -> str:
     """
-    Extracts code from a markdown code block. Returns the raw string
-    if no markdown fences are found.
+    Extracts code from a markdown code block using regex.
+    Handles blocks with optional language labels like ```python ... ```.
+    Returns the raw string if no code fences are found.
     """
     text = raw.strip()
 
     if "```" in text:
-        parts = text.split("```")
-        for part in parts:
-            part = part.strip()
-            # Skip empty parts and language labels
-            if not part or part.startswith("jsx") or part.startswith("javascript") or part.startswith("js"):
-                continue
-            # Take the first substantial code block
-            if len(part) > 20:
-                return part
+        match = re.search(r"```(?:\w+)?\n(.*?)```", text, re.DOTALL)
+        if match:
+            return match.group(1).strip()
 
     return text
 
 
-def generate_code(design: str) -> dict:
+def generate_code(design: str, language: str = None) -> dict:
     """
-    Communicates with the Groq API to generate a React component
-    based on a design description. Returns a dict with language and code keys.
+    Generates code in the specified or detected language using the Groq API.
+    Accepts an optional language parameter — if not provided, the language
+    is auto-detected from the design description.
+
+    For C++, also generates Google Test code.
     """
-    user_prompt = f"Design: {design}"
+    lang = detect_language(design, language)
+    system_prompt, user_prompt = build_code_prompt(design, lang)
 
     def _call_llm() -> str:
         resp = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
-                {"role": "system", "content": CODE_GENERATION_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=TEMPERATURE,
         )
         return resp.choices[0].message.content
 
+    # Generate implementation code
+    code = ""
     for attempt in range(2):
         try:
             raw_output = _call_llm()
             code = _extract_code_block(raw_output)
-
-            if not code.strip():
-                raise ValueError("Empty code generated")
-
-            return {"language": "javascript", "code": code.strip()}
-
+            if code.strip():
+                break
         except Exception as e:
             if attempt == 1:
-                print(f"Error generating code on retry attempt: {e}")
-                return {"language": "javascript", "code": "// Code generation failed. Please try again with a more detailed description."}
+                print(f"Error generating code for {lang} on retry attempt: {e}")
+                code = ""
+
+    result = {
+        "language": lang,
+        "code": code.strip() if code.strip() else "// Code generation failed. Please try again with a more detailed description."
+    }
+
+    # For C++, also generate GTest unit tests
+    if lang == "cpp" and code.strip():
+        result["gtest_code"] = _generate_gtest_code(design, code.strip())
+
+    return result
