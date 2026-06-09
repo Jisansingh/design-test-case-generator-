@@ -1,10 +1,29 @@
+import json
 import os
 import tempfile
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
 from app.crash_service import write_source_file, compile_program, simulate_crash
 
 client = TestClient(app)
+
+MOCK_BACKTRACE_JSON = json.dumps({
+    "issue": "Null pointer dereference",
+    "root_cause": "Null pointer accessed in crashFunction() at line 6",
+    "suggestions": [
+        "Initialize pointer before use",
+        "Add null checks before dereferencing",
+        "Use smart pointers instead of raw pointers"
+    ]
+})
+
+
+def _mock_groq(content):
+    mock = MagicMock()
+    mock.choices = [MagicMock()]
+    mock.choices[0].message.content = content
+    return mock
 
 
 def test_write_source_creates_file():
@@ -67,8 +86,10 @@ def test_api_analyze_crash_contains_expected_functions():
     assert "main" in frame_text
 
 
-def test_analyze_backtrace_returns_expected_structure():
+@patch("app.crash_ai_service.client.chat.completions.create")
+def test_analyze_backtrace_returns_expected_structure(mock_create):
     from app.crash_ai_service import analyze_backtrace
+    mock_create.return_value = _mock_groq(MOCK_BACKTRACE_JSON)
 
     backtrace = [
         "#0 crashFunction()",
@@ -83,8 +104,10 @@ def test_analyze_backtrace_returns_expected_structure():
     assert len(result["suggestions"]) > 0
 
 
-def test_analyze_backtrace_identifies_null_pointer():
+@patch("app.crash_ai_service.client.chat.completions.create")
+def test_analyze_backtrace_identifies_null_pointer(mock_create):
     from app.crash_ai_service import analyze_backtrace
+    mock_create.return_value = _mock_groq(MOCK_BACKTRACE_JSON)
 
     backtrace = [
         "#0 crashFunction()",
@@ -97,7 +120,9 @@ def test_analyze_backtrace_identifies_null_pointer():
     assert len(result["root_cause"]) > 0
 
 
-def test_api_analyze_crash_report_returns_json():
+@patch("app.crash_ai_service.client.chat.completions.create")
+def test_api_analyze_crash_report_returns_json(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_BACKTRACE_JSON)
     response = client.post(
         "/analyze-crash-report",
         json={"backtrace": ["#0 crashFunction()", "#1 processRequest()", "#2 main()"]},
@@ -120,7 +145,9 @@ def test_api_analyze_crash_report_empty_backtrace():
     assert "detail" in data
 
 
-def test_crash_simulation_and_ai_analysis_pipeline():
+@patch("app.crash_ai_service.client.chat.completions.create")
+def test_crash_simulation_and_ai_analysis_pipeline(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_BACKTRACE_JSON)
     crash_result = simulate_crash()
     assert crash_result["status"] == "crashed"
     backtrace = crash_result["backtrace"]

@@ -69,7 +69,10 @@ def _parse_backtrace(output: str) -> list:
             func_part = line.split("`")[1]
             func_name = re.match(r"([^ ]+)", func_part)
             if func_name:
-                entry = f"#{frame_num} {func_name.group(1)}"
+                name = func_name.group(1)
+                if not name.endswith(")"):
+                    name += "()"
+                entry = f"#{frame_num} {name}"
                 if entry not in seen:
                     seen.add(entry)
                     frames.append(entry)
@@ -82,7 +85,8 @@ def simulate_crash() -> dict:
         binary_path = os.path.join(tmpdir, "crash_sim")
         compile_program(source_path, binary_path)
         backtrace = extract_backtrace(binary_path)
+        status = "crashed" if backtrace else "failed"
         return {
-            "status": "crashed",
+            "status": status,
             "backtrace": backtrace,
         }
