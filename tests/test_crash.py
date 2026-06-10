@@ -4,7 +4,7 @@ import tempfile
 from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
-from app.crash_service import write_source_file, compile_program, simulate_crash
+from app.crash_service import write_source_file, compile_program, simulate_crash, analyze_user_code, _parse_structured_backtrace
 
 client = TestClient(app)
 
@@ -161,3 +161,249 @@ def test_crash_simulation_and_ai_analysis_pipeline(mock_create):
     assert "severity" in data
     assert "suggested_fix" in data
     assert len(data["suggested_fix"]) > 0
+
+
+CPP_NULL_DEREF = """
+#include <iostream>
+
+int main() {
+    int* ptr = nullptr;
+    *ptr = 42;
+    return 0;
+}
+"""
+
+CPP_STACK_OVERFLOW = """
+#include <iostream>
+
+void infinite_recursion(int n) {
+    int x = n + 1;
+    infinite_recursion(x);
+}
+
+int main() {
+    infinite_recursion(0);
+    return 0;
+}
+"""
+
+CPP_NORMAL = """
+#include <iostream>
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    std::cout << "Result: " << add(2, 3) << std::endl;
+    return 0;
+}
+"""
+
+C_NULL_DEREF = """
+#include <stdio.h>
+#include <stdlib.h>
+
+int main() {
+    int* ptr = NULL;
+    *ptr = 42;
+    return 0;
+}
+"""
+
+
+def test_analyze_user_code_cpp_null_deref():
+    result = analyze_user_code(CPP_NULL_DEREF, "cpp")
+    assert result["crashed"] is True
+    assert result["signal"] == 11
+    assert result["exit_code"] != 0
+    assert len(result["backtrace"]) >= 1
+    frame = result["backtrace"][0]
+    assert frame["frame"] == 0
+    assert "main" in frame["function"]
+    assert frame["file"] is not None
+    assert frame["line"] is not None
+
+
+def test_analyze_user_code_cpp_stack_overflow():
+    result = analyze_user_code(CPP_STACK_OVERFLOW, "cpp")
+    assert result["crashed"] is True
+    assert result["signal"] in (11, 6)
+    # Note: LLDB may timeout on deep stack overflow, backtrace may be empty
+    # This is a known limitation - we still detect the crash correctly
+
+
+def test_analyze_user_code_cpp_normal():
+    result = analyze_user_code(CPP_NORMAL, "cpp")
+    assert result["crashed"] is False
+    assert result["signal"] is None
+    assert result["exit_code"] == 0
+    assert "Result: 5" in result["stdout"]
+    assert result["backtrace"] == []
+
+
+def test_analyze_user_code_c_null_deref():
+    result = analyze_user_code(C_NULL_DEREF, "c")
+    assert result["crashed"] is True
+    assert result["signal"] == 11
+    assert len(result["backtrace"]) >= 1
+    frame = result["backtrace"][0]
+    assert "main" in frame["function"]
+
+
+def test_api_analyze_user_crash_cpp_null_deref():
+    response = client.post(
+        "/analyze-user-crash",
+        json={"code": CPP_NULL_DEREF, "language": "cpp"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["crashed"] is True
+    assert data["signal"] == 11
+    assert "backtrace" in data
+    assert len(data["backtrace"]) >= 1
+    frame = data["backtrace"][0]
+    assert frame["frame"] == 0
+    assert "function" in frame
+    assert "file" in frame
+    assert "line" in frame
+
+
+def test_api_analyze_user_crash_cpp_normal():
+    response = client.post(
+        "/analyze-user-crash",
+        json={"code": CPP_NORMAL, "language": "cpp"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["crashed"] is False
+    assert data["signal"] is None
+    assert data["exit_code"] == 0
+    assert data["backtrace"] == []
+
+
+def test_api_analyze_user_crash_invalid_language():
+    response = client.post(
+        "/analyze-user-crash",
+        json={"code": "int main() {}", "language": "python"},
+    )
+    assert response.status_code == 400
+    data = response.json()
+    assert "detail" in data
+
+
+def test_parse_structured_backtrace():
+    sample_output = """
+frame #0: 0x0000000100003f50 main() at /tmp/user_code.cpp:5
+frame #1: 0x0000000100003f80 start() at /tmp/user_code.cpp:10
+"""
+    frames = _parse_structured_backtrace(sample_output)
+    assert len(frames) == 2
+    assert frames[0]["frame"] == 0
+    assert frames[0]["function"] == "main()"
+    assert frames[0]["file"] == "/tmp/user_code.cpp"
+    assert frames[0]["line"] == 5
+    assert frames[1]["frame"] == 1
+    assert frames[1]["function"] == "start()"
+
+
+CPP_NULL_DEREF_CODE = """
+#include <iostream>
+
+int main() {
+    int* ptr = nullptr;
+    *ptr = 42;
+    return 0;
+}
+"""
+
+CPP_DIV_BY_ZERO_CODE = """
+#include <iostream>
+
+int main() {
+    int x = 10;
+    int y = 0;
+    int result = x / y;
+    std::cout << result << std::endl;
+    return 0;
+}
+"""
+
+CPP_ASSERT_FAIL_CODE = """
+#include <cassert>
+
+int main() {
+    int x = -1;
+    assert(x > 0);
+    return 0;
+}
+"""
+
+CPP_USE_AFTER_FREE_CODE = """
+#include <iostream>
+#include <cstdlib>
+
+int main() {
+    int* ptr = (int*)malloc(sizeof(int));
+    *ptr = 42;
+    free(ptr);
+    *ptr = 99;
+    return 0;
+}
+"""
+
+
+def test_rule_based_sigsegv_null_deref():
+    from app.crash_ai_service import _classify_crash
+    crash_line = 5
+    result = _classify_crash(11, CPP_NULL_DEREF_CODE, crash_line)
+    assert result is not None
+    assert "null pointer" in result["root_cause"].lower() or "Null" in result["root_cause"]
+    assert result["severity"] == "critical"
+    assert "ptr" in result["suggested_fix"] or "pointer" in result["suggested_fix"].lower()
+
+
+def test_rule_based_sigfpe_div_by_zero():
+    from app.crash_ai_service import _classify_crash
+    crash_line = 7
+    result = _classify_crash(8, CPP_DIV_BY_ZERO_CODE, crash_line)
+    assert result is not None
+    assert "division by zero" in result["root_cause"].lower() or "zero" in result["root_cause"].lower()
+    assert result["severity"] in ("critical", "high")
+    assert "divisor" in result["suggested_fix"].lower() or "!= 0" in result["suggested_fix"]
+
+
+def test_rule_based_sigabrt_assert():
+    from app.crash_ai_service import _classify_crash
+    crash_line = 6
+    result = _classify_crash(6, CPP_ASSERT_FAIL_CODE, crash_line)
+    assert result is not None
+    assert "assertion" in result["root_cause"].lower() or "assert" in result["root_cause"].lower()
+    assert result["severity"] == "high"
+
+
+def test_rule_based_sigsegv_use_after_free():
+    from app.crash_ai_service import _classify_crash
+    crash_line = 9
+    result = _classify_crash(11, CPP_USE_AFTER_FREE_CODE, crash_line)
+    assert result is not None
+    assert "use-after-free" in result["root_cause"].lower() or "freed" in result["root_cause"].lower()
+    assert result["severity"] == "critical"
+
+
+def test_rule_based_unknown_signal_returns_none():
+    from app.crash_ai_service import _classify_crash
+    result = _classify_crash(4, CPP_NULL_DEREF_CODE, 5)
+    assert result is None
+
+
+def test_rule_based_no_code_returns_none():
+    from app.crash_ai_service import _classify_crash
+    result = _classify_crash(11, None, None)
+    assert result is None
+
+
+def test_rule_based_unknown_crash_line_returns_none():
+    from app.crash_ai_service import _classify_crash
+    result = _classify_crash(11, "int main() {}", 999)
+    assert result is None

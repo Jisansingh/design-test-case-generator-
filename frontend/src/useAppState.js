@@ -168,15 +168,22 @@ function useAppState() {
   }
 
   const handleCrashAnalysis = async () => {
+    if (!generatedCode || !generatedCode.code) {
+      setCrashError("No generated code to analyze. Please generate code first.")
+      return
+    }
     setIsCrashAnalyzing(true)
     setCrashResult(null)
     setCrashReport(null)
     setCrashError(null)
     try {
-      const simRes = await fetch('/api/analyze-crash', {
+      const simRes = await fetch('/api/analyze-user-crash', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ design: designDescription }),
+        body: JSON.stringify({
+          code: generatedCode.code,
+          language: generatedCode.language,
+        }),
       })
       if (!simRes.ok) {
         const errData = await simRes.json().catch(() => null)
@@ -185,10 +192,18 @@ function useAppState() {
       const simData = await simRes.json()
       setCrashResult(simData)
 
+      const backtraceFrames = simData.backtrace || []
+      const backtraceStrings = backtraceFrames.map((f) => `#${f.frame} ${f.function}`)
       const reportRes = await fetch('/api/analyze-crash-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ backtrace: simData.backtrace }),
+        body: JSON.stringify({
+          backtrace: backtraceStrings,
+          code: generatedCode.code,
+          signal: simData.signal,
+          stderr: simData.stderr,
+          backtrace_frames: backtraceFrames,
+        }),
       })
       if (!reportRes.ok) {
         const errData = await reportRes.json().catch(() => null)

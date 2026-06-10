@@ -5,9 +5,9 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from app.llm_service import generate_test_cases, generate_code
-from app.schemas import DesignInput, TestCases, CodeGenOutput, CrashAnalysisOutput, CrashReportInput, CrashReportOutput
+from app.schemas import DesignInput, TestCases, CodeGenOutput, CrashAnalysisOutput, CrashReportInput, CrashReportOutput, UserCrashAnalysisInput, UserCrashAnalysisOutput
 from app.execution_service import execute_test_cases, generate_text_report
-from app.crash_service import simulate_crash
+from app.crash_service import simulate_crash, analyze_user_code
 from app.crash_ai_service import analyze_backtrace
 # Standard basic logging configuration
 logging.basicConfig(level=logging.INFO)
@@ -85,7 +85,13 @@ def analyze_crash_report(request: CrashReportInput):
         raise HTTPException(status_code=400, detail="Backtrace cannot be empty")
 
     logger.info(f"Analyzing backtrace with {len(request.backtrace)} frames...")
-    result = analyze_backtrace(request.backtrace)
+    result = analyze_backtrace(
+        request.backtrace,
+        code=request.code,
+        signal=request.signal,
+        stderr=request.stderr,
+        backtrace_frames=request.backtrace_frames,
+    )
     return result
 
 
@@ -103,6 +109,25 @@ def analyze_crash():
         raise HTTPException(
             status_code=500,
             detail="Crash analysis failed. Ensure g++ and lldb are installed.",
+        )
+
+
+@app.post("/analyze-user-crash", response_model=UserCrashAnalysisOutput)
+def analyze_user_crash(request: UserCrashAnalysisInput):
+    logger.info(f"Analyzing user {request.language} code for crashes...")
+    try:
+        result = analyze_user_code(request.code, request.language)
+        logger.info(f"User crash analysis complete: crashed={result['crashed']}, signal={result['signal']}")
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"User crash analysis failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Crash analysis failed. Ensure gcc/g++ and lldb are installed.",
         )
 
 

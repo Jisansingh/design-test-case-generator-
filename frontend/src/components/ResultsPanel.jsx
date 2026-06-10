@@ -137,6 +137,17 @@ function cleanReport(report) {
     .trim()
 }
 
+const CRASH_SIGNALS = {
+  11: 'SIGSEGV',
+  8:  'SIGFPE',
+  6:  'SIGABRT',
+  4:  'SIGILL',
+}
+
+function signalName(sig) {
+  return CRASH_SIGNALS[sig] || `signal ${sig}`
+}
+
 function ResultsPanel({
   generatedCode,
   testResults,
@@ -287,7 +298,7 @@ function ResultsPanel({
         <div className="loading-state">
           <span className="spinner-lg" />
           <h2 className="loading-title">Analyzing Crash...</h2>
-          <p className="loading-text">Simulating crash and generating AI analysis.</p>
+          <p className="loading-text">Compiling and running user code for crash detection.</p>
         </div>
       </section>
     )
@@ -430,43 +441,86 @@ function ResultsPanel({
               </div>
             )}
 
-            <div className="crash-section">
-              <h3 className="crash-section-title">Simulated Crash</h3>
-              <div className="crash-field">
-                <span className="crash-field-label">Status</span>
-                <span className="crash-field-value">{crashResult?.status || 'N/A'}</span>
-              </div>
-              <div className="crash-field">
-                <span className="crash-field-label">Backtrace</span>
-                <pre className="crash-backtrace">{(crashResult?.backtrace || []).join('\n')}</pre>
-              </div>
-            </div>
+            {crashResult && (
+              <>
+                <div className="crash-header">
+                  <div className="crash-header-status">
+                    <span className={`crash-badge ${crashResult.crashed ? 'crash-badge--crashed' : 'crash-badge--ok'}`}>
+                      {crashResult.crashed ? 'CRASHED' : 'OK'}
+                    </span>
+                  </div>
+                  <div className="crash-header-meta">
+                    {crashResult.signal != null && (
+                      <div className="crash-meta-item">
+                        <span className="crash-meta-label">Signal</span>
+                        <span className="crash-meta-value">{crashResult.signal} ({signalName(crashResult.signal)})</span>
+                      </div>
+                    )}
+                    <div className="crash-meta-item">
+                      <span className="crash-meta-label">Exit Code</span>
+                      <span className="crash-meta-value">{crashResult.exit_code}</span>
+                    </div>
+                    {crashResult.crashed === false && crashResult.stdout && (
+                      <div className="crash-meta-item">
+                        <span className="crash-meta-label">Output</span>
+                        <span className="crash-meta-value crash-meta-value--mono">{crashResult.stdout.slice(0, 120)}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {crashResult.backtrace && crashResult.backtrace.length > 0 && (
+                  <div className="crash-backtrace-section">
+                    <div className="crash-backtrace-header">
+                      <span className="crash-section-label">Backtrace</span>
+                    </div>
+                    <div className="crash-backtrace-frames">
+                      {crashResult.backtrace.map((frame, i) => (
+                        <div key={i} className="crash-frame">
+                          <div className="crash-frame-header">
+                            <span className="crash-frame-num">#{frame.frame}</span>
+                            <span className="crash-frame-func">{frame.function}</span>
+                          </div>
+                          <div className="crash-frame-loc">{frame.file ? `${frame.file}:${frame.line ?? '?'}` : ''}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
 
             {crashReport && (
-              <div className="crash-section">
-                <h3 className="crash-section-title">AI Analysis</h3>
+              <div className="crash-analysis-section">
+                <div className="crash-backtrace-header">
+                  <span className="crash-section-label">AI Analysis</span>
+                </div>
+
                 {crashReport.crash_location && (
                   <div className="crash-field">
                     <span className="crash-field-label">Crash Location</span>
-                    <span className="crash-field-value">{crashReport.crash_location}</span>
+                    <span className="crash-field-value crash-field-value--mono">{crashReport.crash_location}</span>
                   </div>
                 )}
+
                 {crashReport.root_cause && (
                   <div className="crash-field">
                     <span className="crash-field-label">Root Cause</span>
                     <span className="crash-field-value">{crashReport.root_cause}</span>
                   </div>
                 )}
+
                 {crashReport.severity && (
                   <div className="crash-field">
                     <span className="crash-field-label">Severity</span>
-                    <span className={`crash-field-value crash-severity--${crashReport.severity.toLowerCase()}`}>{crashReport.severity}</span>
+                    <span className={`crash-severity-badge crash-severity--${crashReport.severity.toLowerCase()}`}>{crashReport.severity}</span>
                   </div>
                 )}
+
                 {crashReport.suggested_fix && (
                   <div className="crash-field">
                     <span className="crash-field-label">Suggested Fix</span>
-                    <span className="crash-field-value">{crashReport.suggested_fix}</span>
+                    <span className="crash-field-value crash-field-value--fix">{crashReport.suggested_fix}</span>
                   </div>
                 )}
               </div>
