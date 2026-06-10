@@ -150,18 +150,23 @@ function ResultsPanel({
   designDescription,
   isDownloading,
   onDownloadReport,
+  crashResult,
+  crashReport,
+  crashError,
+  isCrashAnalyzing,
 }) {
   const [activeTab, setActiveTab] = useState('code')
 
   const tabs = []
   if (generatedCode) {
     tabs.push({ id: 'code', label: 'Code' })
-    if (generatedCode.language === 'cpp' && generatedCode.gtest_code) {
+    if ((generatedCode.language === 'cpp' || generatedCode.language === 'c') && generatedCode.gtest_code) {
       tabs.push({ id: 'gtest', label: 'GTest' })
     }
   }
   if (executionResults) tabs.push({ id: 'tests', label: 'Tests' })
   if (reportText) tabs.push({ id: 'report', label: 'Report' })
+  if (crashReport) tabs.push({ id: 'crash', label: 'Crash Analysis' })
 
   if (tabs.length > 0 && !tabs.find((t) => t.id === activeTab)) {
     setActiveTab(tabs[0].id)
@@ -276,6 +281,18 @@ function ResultsPanel({
     )
   }
 
+  if (isCrashAnalyzing) {
+    return (
+      <section className="results-area">
+        <div className="loading-state">
+          <span className="spinner-lg" />
+          <h2 className="loading-title">Analyzing Crash...</h2>
+          <p className="loading-text">Simulating crash and generating AI analysis.</p>
+        </div>
+      </section>
+    )
+  }
+
   if (tabs.length > 0) {
     return (
       <section className="results-area">
@@ -293,7 +310,7 @@ function ResultsPanel({
 
         <TabBar tabs={tabs} activeTab={activeTab} onTabChange={setActiveTab} />
 
-        {activeTab === 'code' && (
+        {activeTab === 'code' && generatedCode && (
           <div className="tab-pane">
             <div className="code-card code-card--full">
               <div className="code-card-header">
@@ -309,7 +326,7 @@ function ResultsPanel({
           </div>
         )}
 
-        {activeTab === 'gtest' && (
+        {activeTab === 'gtest' && generatedCode && generatedCode.gtest_code && (
           <div className="tab-pane">
             <div className="code-card code-card--full">
               <div className="code-card-header">
@@ -397,6 +414,63 @@ function ResultsPanel({
                 </>
               )}
             </button>
+          </div>
+        )}
+
+        {activeTab === 'crash' && (
+          <div className="tab-pane">
+            {crashError && (
+              <div className="error-banner">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>Crash analysis failed: {crashError}</span>
+              </div>
+            )}
+
+            <div className="crash-section">
+              <h3 className="crash-section-title">Simulated Crash</h3>
+              <div className="crash-field">
+                <span className="crash-field-label">Status</span>
+                <span className="crash-field-value">{crashResult?.status || 'N/A'}</span>
+              </div>
+              <div className="crash-field">
+                <span className="crash-field-label">Backtrace</span>
+                <pre className="crash-backtrace">{(crashResult?.backtrace || []).join('\n')}</pre>
+              </div>
+            </div>
+
+            {crashReport && (
+              <div className="crash-section">
+                <h3 className="crash-section-title">AI Analysis</h3>
+                {crashReport.crash_location && (
+                  <div className="crash-field">
+                    <span className="crash-field-label">Crash Location</span>
+                    <span className="crash-field-value">{crashReport.crash_location}</span>
+                  </div>
+                )}
+                {crashReport.root_cause && (
+                  <div className="crash-field">
+                    <span className="crash-field-label">Root Cause</span>
+                    <span className="crash-field-value">{crashReport.root_cause}</span>
+                  </div>
+                )}
+                {crashReport.severity && (
+                  <div className="crash-field">
+                    <span className="crash-field-label">Severity</span>
+                    <span className={`crash-field-value crash-severity--${crashReport.severity.toLowerCase()}`}>{crashReport.severity}</span>
+                  </div>
+                )}
+                {crashReport.suggested_fix && (
+                  <div className="crash-field">
+                    <span className="crash-field-label">Suggested Fix</span>
+                    <span className="crash-field-value">{crashReport.suggested_fix}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </section>

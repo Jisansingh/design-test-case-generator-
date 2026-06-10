@@ -643,6 +643,80 @@
   }
 }
 
+/* Crash analysis */
+
+.crash-section {
+  background-color: #0e0e18;
+  border: 1px solid #24243a;
+  border-radius: 10px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.crash-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ef4444;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.crash-field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.crash-field-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: #666680;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.crash-field-value {
+  font-size: 13px;
+  color: #c8c8e0;
+  line-height: 1.5;
+}
+
+.crash-backtrace {
+  font-family: 'SF Mono', 'Fira Code', 'Fira Mono', Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #b0b0c8;
+  background-color: #0d0d17;
+  border: 1px solid #1e1e32;
+  border-radius: 6px;
+  padding: 10px;
+  white-space: pre;
+  overflow: auto;
+  margin: 0;
+}
+
+.crash-severity--critical {
+  color: #ef4444;
+  font-weight: 700;
+}
+
+.crash-severity--high {
+  color: #f97316;
+  font-weight: 600;
+}
+
+.crash-severity--medium {
+  color: #eab308;
+  font-weight: 600;
+}
+
+.crash-severity--low {
+  color: #22c55e;
+  font-weight: 600;
+}
+
 @media (max-width: 600px) {
   .exec-summary {
     padding: 12px 14px;

@@ -1,9 +1,10 @@
 import logging
+import os
 import tempfile
-from fastapi import FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from app.llm_service import generate_test_cases, generate_code, detect_language
+from app.llm_service import generate_test_cases, generate_code
 from app.schemas import DesignInput, TestCases, CodeGenOutput, CrashAnalysisOutput, CrashReportInput, CrashReportOutput
 from app.execution_service import execute_test_cases, generate_text_report
 from app.crash_service import simulate_crash
@@ -150,7 +151,7 @@ def generate_report(request: DesignInput):
 
 
 @app.post("/download-report")
-def download_report(request: DesignInput):
+def download_report(request: DesignInput, background_tasks: BackgroundTasks):
     # Step 1: Generate test cases using the LLM
     generated = generate_test_cases(request.design)
 
@@ -178,6 +179,7 @@ def download_report(request: DesignInput):
     )
     temp_file.write(report_text)
     temp_file.close()
+    background_tasks.add_task(os.unlink, temp_file.name)
 
     # Step 6: Return the file as a download
     return FileResponse(

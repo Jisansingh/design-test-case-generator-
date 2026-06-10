@@ -44,6 +44,29 @@ int binarySearch(int arr[], int l, int r, int x) {
 }
 ```"""
 
+MOCK_C_CODE = """```c
+#include <stdio.h>
+#include <stdlib.h>
+
+struct Node {
+    int data;
+    struct Node* next;
+};
+
+struct Node* createNode(int data) {
+    struct Node* node = (struct Node*)malloc(sizeof(struct Node));
+    node->data = data;
+    node->next = NULL;
+    return node;
+}
+```"""
+
+MOCK_JAVASCRIPT_CODE = """```javascript
+function filterEvenNumbers(numbers) {
+    return numbers.filter(function(num) { return num % 2 === 0; });
+}
+```"""
+
 MOCK_GTEST_CODE = """```cpp
 #include <gtest/gtest.h>
 
@@ -219,3 +242,69 @@ def test_non_cpp_language_no_gtest(mock_create):
     assert response.status_code == 200
     data = response.json()
     assert "gtest_code" not in data
+
+
+@patch("app.llm_service.client.chat.completions.create")
+def test_c_generation_valid_c_code(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_C_CODE)
+    response = client.post(
+        "/generate-code",
+        json={"design": "Linked list implementation", "language": "c"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["language"] == "c"
+    assert "#include <stdio.h>" in data["code"]
+    assert "#include <stdlib.h>" in data["code"]
+    assert "struct" in data["code"]
+    assert "malloc" in data["code"]
+    assert "gtest_code" not in data
+
+
+@patch("app.llm_service.client.chat.completions.create")
+def test_c_generation_explicit_language(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_C_CODE)
+    response = client.post(
+        "/generate-code",
+        json={"design": "Linked list implementation", "language": "c"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["language"] == "c"
+    assert len(data["code"]) > 0
+
+
+@patch("app.llm_service.client.chat.completions.create")
+def test_javascript_generation(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_JAVASCRIPT_CODE)
+    response = client.post(
+        "/generate-code",
+        json={"design": "A function that filters even numbers", "language": "javascript"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["language"] == "javascript"
+    assert len(data["code"]) > 0
+    assert "function" in data["code"]
+    assert "gtest_code" not in data
+
+
+@patch("app.llm_service.client.chat.completions.create")
+def test_react_generation(mock_create):
+    mock_create.return_value = _mock_groq(MOCK_REACT_CODE)
+    response = client.post(
+        "/generate-code",
+        json={"design": "Build a login page", "language": "react"}
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["language"] == "react"
+    assert len(data["code"]) > 0
+    assert "export default" in data["code"]
+    assert "gtest_code" not in data
+
+
+def test_all_supported_languages_listed():
+    from app.llm_service import SUPPORTED_LANGUAGES
+    expected = {"c", "cpp", "python", "java", "javascript", "react"}
+    assert SUPPORTED_LANGUAGES == expected

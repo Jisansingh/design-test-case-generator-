@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from difflib import SequenceMatcher
@@ -10,6 +11,8 @@ load_dotenv()
 
 # Initialize Groq client
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+logger = logging.getLogger(__name__)
 
 # Controls the creativity level of the LLM output
 TEMPERATURE = 0.5
@@ -145,7 +148,7 @@ def generate_test_cases(design: str) -> dict:
         except (json.JSONDecodeError, KeyError, TypeError, ValueError) as e:
             # If it fails on first try, let's retry. If second fails, return default gracefully.
             if attempt == 1:
-                print(f"Error generating test cases on retry attempt: {e}")
+                logger.error(f"Error generating test cases on retry attempt: {e}")
                 return {"functional": [], "edge_cases": [], "security": []}
 
 
@@ -238,16 +241,17 @@ console.log("Even numbers:", evens);
 ```
 """,
     "c": """
-You are a senior C developer. Generate C code based on the given design description.
+You are a senior C developer writing in ANSI C (C99). Generate C code based on the given design description.
 
 Rules:
 - Output ONLY valid C code wrapped in a single markdown code block with the language label "c".
-- Use standard C libraries only (stdio.h, stdlib.h, string.h, math.h, etc.).
-- Write clean, well-structured code with helpful comments where needed.
+- Use ONLY standard C libraries: stdio.h, stdlib.h, string.h, math.h, etc.
+- NEVER use C++ features: no iostream, no class, no std::, no using namespace std, no new/delete, no templates, no nullptr.
+- Use malloc() and free() for dynamic memory (not new/delete).
+- Use structs (not classes).
 - Include a main() function that demonstrates the functionality.
-- Use descriptive variable and function names.
-- Prefer simple, readable solutions over complex optimizations.
-- Handle memory carefully (malloc/free where appropriate).
+- Write clean, beginner-friendly code with simple solutions.
+- Add comments only when they clarify intent.
 - Do NOT include explanations before or after the code block.
 
 Example output for "A program that calculates the factorial of a number":
@@ -264,8 +268,7 @@ int main() {
     printf("Factorial of %d is %d\\n", num, factorial(num));
     return 0;
 }
-```
-""",
+```""",
     "cpp": """
 You are a senior C++ developer. Generate C++ code based on the given design description.
 
@@ -435,7 +438,7 @@ def _generate_gtest_code(design: str, implementation_code: str) -> str:
                 return gtest_code.strip()
         except Exception as e:
             if attempt == 1:
-                print(f"Error generating GTest code: {e}")
+                logger.error(f"Error generating GTest code: {e}")
                 return "// GTest code generation failed."
 
     return "// GTest code generation failed."
@@ -489,7 +492,7 @@ def generate_code(design: str, language: str = None) -> dict:
                 break
         except Exception as e:
             if attempt == 1:
-                print(f"Error generating code for {lang} on retry attempt: {e}")
+                logger.error(f"Error generating code for {lang} on retry attempt: {e}")
                 code = ""
 
     result = {

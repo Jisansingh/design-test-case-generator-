@@ -12,6 +12,8 @@ function App() {
     generatedCode, testResults, executionResults, reportText,
     codeError, testError, execError, reportError, phase,
     isDownloading, handleGenerate, handleDownloadReport,
+    crashResult, crashReport, crashError, isCrashAnalyzing,
+    handleCrashAnalysis,
   } = state
 
   const handleSubmit = (e) => {
@@ -61,6 +63,10 @@ function App() {
             designDescription={designDescription}
             isDownloading={isDownloading}
             onDownloadReport={handleDownloadReport}
+            crashResult={crashResult}
+            crashReport={crashReport}
+            crashError={crashError}
+            isCrashAnalyzing={isCrashAnalyzing}
           />
         </main>
 
@@ -95,6 +101,20 @@ function App() {
             </div>
             <p className="prompt-hint">Press Enter to send, Shift+Enter for a new line</p>
           </form>
+          <button
+            className="crash-btn"
+            onClick={() => handleCrashAnalysis()}
+            disabled={isCrashAnalyzing}
+          >
+            {isCrashAnalyzing ? (
+              <span className="prompt-btn-loading">
+                <span className="spinner-sm" />
+                <span>Analyzing...</span>
+              </span>
+            ) : (
+              'Run Crash Analysis'
+            )}
+          </button>
         </footer>
       </div>
     </div>

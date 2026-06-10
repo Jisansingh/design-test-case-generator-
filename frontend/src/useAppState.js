@@ -1,20 +1,30 @@
 import { useState } from 'react'
 
 const LANG_RULES = [
-  { keyword: 'python', lang: 'python' },
   { keyword: 'c\\+\\+', lang: 'cpp' },
   { keyword: 'cpp', lang: 'cpp' },
+  { keyword: 'c', lang: 'c' },
+  { keyword: 'python', lang: 'python' },
   { keyword: 'react', lang: 'react' },
   { keyword: 'javascript', lang: 'javascript' },
   { keyword: 'js', lang: 'javascript' },
 ]
 
+const LANG_PREFIXES = [
+  '\\bwritten\\s+in\\s+',
+  '\\busing\\s+',
+  '\\bwith\\s+',
+  '\\bin\\s+',
+]
+
 function parsePrompt(text) {
   for (const { keyword, lang } of LANG_RULES) {
-    const pattern = new RegExp(`\\bin\\s+${keyword}(?!\\w)`, 'i')
-    if (pattern.test(text)) {
-      const design = text.replace(pattern, '').replace(/\s+/g, ' ').trim()
-      return { design, language: lang }
+    for (const prefix of LANG_PREFIXES) {
+      const re = new RegExp(prefix + keyword + '(?!\\w)', 'i')
+      if (re.test(text)) {
+        const design = text.replace(re, '').replace(/\s+/g, ' ').trim()
+        return { design, language: lang }
+      }
     }
   }
   return { design: text, language: null }
@@ -33,6 +43,10 @@ function useAppState() {
   const [phase, setPhase] = useState('idle')
   const [designDescription, setDesignDescription] = useState('')
   const [isDownloading, setIsDownloading] = useState(false)
+  const [crashResult, setCrashResult] = useState(null)
+  const [crashReport, setCrashReport] = useState(null)
+  const [crashError, setCrashError] = useState(null)
+  const [isCrashAnalyzing, setIsCrashAnalyzing] = useState(false)
 
   const handleGenerate = async (desc) => {
     setDesignDescription(desc)
@@ -153,6 +167,42 @@ function useAppState() {
     }
   }
 
+  const handleCrashAnalysis = async () => {
+    setIsCrashAnalyzing(true)
+    setCrashResult(null)
+    setCrashReport(null)
+    setCrashError(null)
+    try {
+      const simRes = await fetch('/api/analyze-crash', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ design: designDescription }),
+      })
+      if (!simRes.ok) {
+        const errData = await simRes.json().catch(() => null)
+        throw new Error(errData?.detail || `Crash analysis failed with status ${simRes.status}`)
+      }
+      const simData = await simRes.json()
+      setCrashResult(simData)
+
+      const reportRes = await fetch('/api/analyze-crash-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ backtrace: simData.backtrace }),
+      })
+      if (!reportRes.ok) {
+        const errData = await reportRes.json().catch(() => null)
+        throw new Error(errData?.detail || `Crash report generation failed with status ${reportRes.status}`)
+      }
+      const reportData = await reportRes.json()
+      setCrashReport(reportData)
+    } catch (err) {
+      setCrashError(err.message)
+    } finally {
+      setIsCrashAnalyzing(false)
+    }
+  }
+
   return {
     isGenerating, setIsGenerating,
     generatedCode, setGeneratedCode,
@@ -166,8 +216,13 @@ function useAppState() {
     phase, setPhase,
     designDescription, setDesignDescription,
     isDownloading, setIsDownloading,
+    crashResult, setCrashResult,
+    crashReport, setCrashReport,
+    crashError, setCrashError,
+    isCrashAnalyzing, setIsCrashAnalyzing,
     handleGenerate,
     handleDownloadReport,
+    handleCrashAnalysis,
   }
 }
 

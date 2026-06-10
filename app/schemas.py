@@ -29,9 +29,10 @@ class CrashReportInput(BaseModel):
 
 
 class CrashReportOutput(BaseModel):
-    issue: str
+    crash_location: str
     root_cause: str
-    suggestions: List[str]
+    severity: str
+    suggested_fix: str
 
 
 class ErrorResponse(BaseModel):

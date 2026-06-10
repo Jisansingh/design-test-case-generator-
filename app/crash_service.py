@@ -66,7 +66,10 @@ def _parse_backtrace(output: str) -> list:
         if "frame #" in line and "`" in line:
             match = re.search(r"frame #(\d+)", line)
             frame_num = match.group(1) if match else "?"
-            func_part = line.split("`")[1]
+            parts = line.split("`")
+            if len(parts) < 2:
+                continue
+            func_part = parts[1]
             func_name = re.match(r"([^ ]+)", func_part)
             if func_name:
                 name = func_name.group(1)

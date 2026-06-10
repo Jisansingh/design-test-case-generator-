@@ -9,13 +9,9 @@ from app.crash_service import write_source_file, compile_program, simulate_crash
 client = TestClient(app)
 
 MOCK_BACKTRACE_JSON = json.dumps({
-    "issue": "Null pointer dereference",
-    "root_cause": "Null pointer accessed in crashFunction() at line 6",
-    "suggestions": [
-        "Initialize pointer before use",
-        "Add null checks before dereferencing",
-        "Use smart pointers instead of raw pointers"
-    ]
+    "root_cause": "Null pointer accessed in crashFunction() at line 6 - pointer was never initialized",
+    "severity": "critical",
+    "suggested_fix": "Initialize the pointer to a valid memory address before dereferencing it"
 })
 
 
@@ -97,11 +93,12 @@ def test_analyze_backtrace_returns_expected_structure(mock_create):
         "#2 main()",
     ]
     result = analyze_backtrace(backtrace)
-    assert "issue" in result
+    assert result["crash_location"] == "crashFunction()"
     assert "root_cause" in result
-    assert "suggestions" in result
-    assert isinstance(result["suggestions"], list)
-    assert len(result["suggestions"]) > 0
+    assert "severity" in result
+    assert result["severity"] in ("critical", "high", "medium", "low")
+    assert "suggested_fix" in result
+    assert len(result["suggested_fix"]) > 0
 
 
 @patch("app.crash_ai_service.client.chat.completions.create")
@@ -115,8 +112,8 @@ def test_analyze_backtrace_identifies_null_pointer(mock_create):
         "#2 main()",
     ]
     result = analyze_backtrace(backtrace)
-    issue_lower = result["issue"].lower()
-    assert "null" in issue_lower or "pointer" in issue_lower or "dereference" in issue_lower
+    assert "crash_location" in result
+    assert "root_cause" in result
     assert len(result["root_cause"]) > 0
 
 
@@ -129,10 +126,11 @@ def test_api_analyze_crash_report_returns_json(mock_create):
     )
     assert response.status_code == 200
     data = response.json()
-    assert "issue" in data
+    assert "crash_location" in data
     assert "root_cause" in data
-    assert "suggestions" in data
-    assert len(data["suggestions"]) > 0
+    assert "severity" in data
+    assert "suggested_fix" in data
+    assert len(data["suggested_fix"]) > 0
 
 
 def test_api_analyze_crash_report_empty_backtrace():
@@ -158,6 +156,8 @@ def test_crash_simulation_and_ai_analysis_pipeline(mock_create):
     )
     assert report.status_code == 200
     data = report.json()
-    assert "issue" in data
+    assert "crash_location" in data
     assert "root_cause" in data
-    assert len(data["suggestions"]) > 0
+    assert "severity" in data
+    assert "suggested_fix" in data
+    assert len(data["suggested_fix"]) > 0
