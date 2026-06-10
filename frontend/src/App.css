@@ -154,6 +154,38 @@ body {
   display: block;
 }
 
+.lang-select {
+  appearance: none;
+  background: #1e1e2e;
+  color: #a0a0c0;
+  border: 1px solid #2a2a42;
+  border-radius: 8px;
+  padding: 6px 28px 6px 10px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  flex-shrink: 0;
+  outline: none;
+  transition: border-color 0.2s ease;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236366f1' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.lang-select:hover {
+  border-color: #6366f1;
+}
+
+.lang-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+.lang-select:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .prompt-hint {
   font-size: 11px;
   color: #3a3a50;

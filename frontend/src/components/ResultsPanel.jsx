@@ -1,5 +1,21 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import './ResultsPanel.css'
+
+function CopyButton({ text }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }, [text])
+  return (
+    <button className="copy-btn" onClick={handleCopy}>
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  )
+}
 
 function TestCategory({ title, tests, executed }) {
   if (!tests || tests.length === 0) return null
@@ -138,7 +154,12 @@ function ResultsPanel({
   const [activeTab, setActiveTab] = useState('code')
 
   const tabs = []
-  if (generatedCode) tabs.push({ id: 'code', label: 'Code' })
+  if (generatedCode) {
+    tabs.push({ id: 'code', label: 'Code' })
+    if (generatedCode.language === 'cpp' && generatedCode.gtest_code) {
+      tabs.push({ id: 'gtest', label: 'GTest' })
+    }
+  }
   if (executionResults) tabs.push({ id: 'tests', label: 'Tests' })
   if (reportText) tabs.push({ id: 'report', label: 'Report' })
 
@@ -152,7 +173,7 @@ function ResultsPanel({
         <div className="loading-state">
           <span className="spinner-lg" />
           <h2 className="loading-title">Generating Code...</h2>
-          <p className="loading-text">The AI is writing React code based on your design description.</p>
+          <p className="loading-text">The AI is generating code based on your design description.</p>
         </div>
       </section>
     )
@@ -279,9 +300,27 @@ function ResultsPanel({
                 <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
                 <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
                 <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
-                <span className="code-card-label">generated-code.jsx</span>
+                <span className="code-card-label">generated-code</span>
+                <span style={{ flex: 1 }} />
+                <CopyButton text={cleanCode(generatedCode.code)} />
               </div>
               <pre className="code-card-content">{cleanCode(generatedCode.code)}</pre>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'gtest' && (
+          <div className="tab-pane">
+            <div className="code-card code-card--full">
+              <div className="code-card-header">
+                <span className="code-card-dot" style={{ backgroundColor: '#22c55e' }} />
+                <span className="code-card-dot" style={{ backgroundColor: '#eab308' }} />
+                <span className="code-card-dot" style={{ backgroundColor: '#ef4444' }} />
+                <span className="code-card-label">gtest-code</span>
+                <span style={{ flex: 1 }} />
+                <CopyButton text={cleanCode(generatedCode.gtest_code)} />
+              </div>
+              <pre className="code-card-content">{cleanCode(generatedCode.gtest_code)}</pre>
             </div>
           </div>
         )}

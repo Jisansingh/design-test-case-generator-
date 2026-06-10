@@ -1,5 +1,25 @@
 import { useState } from 'react'
 
+const LANG_RULES = [
+  { keyword: 'python', lang: 'python' },
+  { keyword: 'c\\+\\+', lang: 'cpp' },
+  { keyword: 'cpp', lang: 'cpp' },
+  { keyword: 'react', lang: 'react' },
+  { keyword: 'javascript', lang: 'javascript' },
+  { keyword: 'js', lang: 'javascript' },
+]
+
+function parsePrompt(text) {
+  for (const { keyword, lang } of LANG_RULES) {
+    const pattern = new RegExp(`\\bin\\s+${keyword}(?!\\w)`, 'i')
+    if (pattern.test(text)) {
+      const design = text.replace(pattern, '').replace(/\s+/g, ' ').trim()
+      return { design, language: lang }
+    }
+  }
+  return { design: text, language: null }
+}
+
 function useAppState() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [generatedCode, setGeneratedCode] = useState(null)
@@ -26,12 +46,15 @@ function useAppState() {
     setExecError(null)
     setReportError(null)
 
+    const { design, language } = parsePrompt(desc)
+
     setPhase('generating-code')
     try {
+      const body = language ? { design, language } : { design }
       const res = await fetch('/api/generate-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ design: desc }),
+        body: JSON.stringify(body),
       })
       if (!res.ok) {
         const errData = await res.json().catch(() => null)

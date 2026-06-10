@@ -428,6 +428,30 @@
   border-radius: 3px;
 }
 
+/* Copy button */
+
+.copy-btn {
+  display: flex;
+  align-items: center;
+  padding: 4px 10px;
+  border: 1px solid #2a2a42;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  background-color: #1a1a2a;
+  color: #8888a0;
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.copy-btn:hover {
+  background-color: #24243a;
+  color: #c0c0d4;
+  border-color: #3a3a5a;
+}
+
 /* Download button */
 
 .download-btn {
