@@ -84,6 +84,11 @@ export async function getProjectTimeline(name) {
   return data
 }
 
+export async function getProjectFile(name, fileName) {
+  const { data } = await api.get(`/projects/${encodeURIComponent(name)}/file/${encodeURIComponent(fileName)}`)
+  return data
+}
+
 export async function getReports() {
   const { data } = await api.get('/reports')
   return data

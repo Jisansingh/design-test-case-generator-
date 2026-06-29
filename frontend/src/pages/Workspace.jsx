@@ -1,15 +1,20 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useLocation } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { Button } from '../components/common/Button'
 import { Badge } from '../components/common/Badge'
 import { Card } from '../components/common/Card'
-import { Spinner, InlineSpinner } from '../components/common/Spinner'
+import { Spinner, InlineSpinner, PageSpinner } from '../components/common/Spinner'
 import { formatDate, formatDuration, successRate, statusLabel, languageColor } from '../utils/formatters'
 import * as api from '../api'
 
 const STORAGE_KEY = 'ai-studio-workspace-draft'
 
+const EXT_TO_LANG = { py: 'python', js: 'javascript', jsx: 'react', java: 'java', c: 'c', cpp: 'cpp' }
+const LANG_TO_EXT = { python: 'py', javascript: 'js', react: 'jsx', java: 'java', c: 'c', cpp: 'cpp' }
+
 export default function Workspace() {
+  const location = useLocation()
   const [design, setDesign] = useState('')
   const [projectName, setProjectName] = useState('')
   const [language, setLanguage] = useState('')
@@ -30,9 +35,12 @@ export default function Workspace() {
 
   const [projectStats, setProjectStats] = useState(null)
   const [projectFiles, setProjectFiles] = useState([])
+  const [copiedToast, setCopiedToast] = useState(null)
+  const [restoringProject, setRestoringProject] = useState(false)
 
   const textareaRef = useRef(null)
   const initialized = useRef(false)
+  const copyTimeout = useRef(null)
 
   const addLog = useCallback((msg, type = 'info') => {
     setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg, type }])
@@ -55,6 +63,78 @@ export default function Workspace() {
       localStorage.setItem(STORAGE_KEY, design)
     }
   }, [design])
+
+  useEffect(() => {
+    const restoreName = location.state?.projectName
+    if (!restoreName || !initialized.current) return
+
+    setRestoringProject(true)
+    addLog(`Restoring workspace for project '${restoreName}'...`, 'info')
+
+    const extMap = LANG_TO_EXT
+
+    Promise.all([
+      api.getProject(restoreName),
+      api.getProjectFiles(restoreName),
+      api.getProjectTimeline(restoreName),
+      api.getProjectFile(restoreName, 'requirement.txt').catch(() => null),
+      api.getReport(restoreName).catch(() => null),
+    ]).then(async ([pRes, fRes, tlRes, reqRes, rptRes]) => {
+      const meta = pRes.success ? pRes.data : null
+      if (!meta) {
+        addLog(`Project '${restoreName}' not found`, 'error')
+        return
+      }
+
+      setProjectName(restoreName)
+      setDesign(reqRes?.success ? reqRes.data.content : '')
+      setLanguage(meta.language || '')
+      if (tlRes.success) setTimeline(tlRes.data || [])
+      if (fRes.success) setProjectFiles(fRes.data || [])
+      if (pRes.success) setProjectStats(meta)
+
+      if (rptRes?.success) setReportText(rptRes.data?.report || null)
+
+      const ext = extMap[meta.language] || 'txt'
+      const codeFile = `generated_code.${ext}`
+      const [codeRes, testsRes, execRes, crashRes, gtestRes] = await Promise.all([
+        api.getProjectFile(restoreName, codeFile).catch(() => null),
+        api.getProjectFile(restoreName, 'generated_tests.json').catch(() => null),
+        api.getProjectFile(restoreName, 'execution_result.json').catch(() => null),
+        api.getProjectFile(restoreName, 'crash_analysis.json').catch(() => null),
+        api.getProjectFile(restoreName, 'gtest.cpp').catch(() => null),
+      ])
+
+      if (codeRes?.success) {
+        const lang = EXT_TO_LANG[ext] || meta.language || 'cpp'
+        const codeObj = { language: lang, code: codeRes.data.content }
+        if (gtestRes?.success) codeObj.gtest_code = gtestRes.data.content
+        setGeneratedCode(codeObj)
+      }
+
+      if (testsRes?.success) {
+        try { setTestResults(JSON.parse(testsRes.data.content)) } catch { /* ignore parse errors */ }
+      }
+      if (execRes?.success) {
+        try { setExecutionResults(JSON.parse(execRes.data.content)) } catch { /* ignore parse errors */ }
+      }
+      if (crashRes?.success) {
+        try {
+          const crash = JSON.parse(crashRes.data.content)
+          setCrashResult(crash)
+          if (crash.ai_analysis) setCrashReport(crash.ai_analysis)
+        } catch { /* ignore parse errors */ }
+      }
+
+      addLog(`Workspace restored for project '${restoreName}'`, 'success')
+    }).catch(e => {
+      addLog(`Failed to restore workspace: ${e.message}`, 'error')
+    }).finally(() => {
+      setRestoringProject(false)
+      window.history.replaceState({}, document.title)
+    })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state?.projectName])
 
   const handleGenerateCode = async () => {
     if (!design.trim()) return
@@ -219,11 +299,26 @@ export default function Workspace() {
     }
   }
 
+  const copyToClipboard = useCallback((text, label = 'Code') => {
+    navigator.clipboard.writeText(text).then(() => {
+      if (copyTimeout.current) clearTimeout(copyTimeout.current)
+      setCopiedToast(`${label} copied to clipboard`)
+      copyTimeout.current = setTimeout(() => setCopiedToast(null), 2000)
+    }).catch(() => {
+      if (copyTimeout.current) clearTimeout(copyTimeout.current)
+      setCopiedToast('Failed to copy')
+      copyTimeout.current = setTimeout(() => setCopiedToast(null), 2000)
+    })
+  }, [])
+
+  const showGTest = generatedCode?.language === 'cpp'
+
   const tabs = [
     { id: 'code', label: 'Code', disabled: !generatedCode },
     { id: 'tests', label: 'Test Cases', disabled: !testResults },
     { id: 'execution', label: 'Execution', disabled: !executionResults },
     { id: 'crash', label: 'Crash Analysis', disabled: !crashReport },
+    { id: 'gtest', label: 'Google Test', disabled: !showGTest },
     { id: 'report', label: 'Reports', disabled: !reportText },
   ]
 
@@ -239,6 +334,8 @@ export default function Workspace() {
     { label: 'Generate Report', onClick: handleGenerateReport, loading: running === 'report', variant: 'secondary' },
     { label: 'Analyze Crash', onClick: handleCrashAnalysis, loading: running === 'crash', variant: 'danger' },
   ]
+
+  if (restoringProject) return <PageSpinner />
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -299,6 +396,13 @@ Example: Build a banking API with deposit, withdraw, and balance check functiona
             </div>
           )}
 
+          {copiedToast && (
+            <div className="bg-accent-600/15 border border-accent-600/30 rounded-lg px-4 py-2 text-sm text-accent-400 flex items-center gap-2">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="20 6 9 17 4 12" /></svg>
+              {copiedToast}
+            </div>
+          )}
+
           <div className="flex gap-1 bg-surface-900 rounded-lg p-1 self-start">
             {tabs.filter(t => !t.disabled).length > 0 ? tabs.filter(t => !t.disabled).map(tab => (
               <button
@@ -315,15 +419,60 @@ Example: Build a banking API with deposit, withdraw, and balance check functiona
             )}
           </div>
 
-          <div className="flex-1 min-h-0 rounded-xl border border-surface-800 overflow-hidden bg-surface-950">
+          <div className="flex-1 min-h-0 rounded-xl border border-surface-800 overflow-hidden bg-surface-950 relative">
             {activeTab === 'code' && generatedCode && (
-              <Editor
-                height="100%"
-                defaultLanguage={generatedCode.language === 'react' ? 'javascript' : generatedCode.language}
-                value={generatedCode.code}
-                theme="vs-dark"
-                options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
-              />
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 bg-surface-900 border-b border-surface-800">
+                  <span className="text-xs text-surface-400 font-mono">{generatedCode.code.length} bytes</span>
+                  <button
+                    onClick={() => copyToClipboard(generatedCode.code, 'Code')}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-surface-800 text-surface-300 hover:text-surface-100 hover:bg-surface-700 transition-colors"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                    Copy Code
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0">
+                  <Editor
+                    height="100%"
+                    defaultLanguage={generatedCode.language === 'react' ? 'javascript' : generatedCode.language}
+                    value={generatedCode.code}
+                    theme="vs-dark"
+                    options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
+                  />
+                </div>
+              </div>
+            )}
+            {activeTab === 'gtest' && showGTest && (
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 bg-surface-900 border-b border-surface-800">
+                  <span className="text-xs text-surface-400">Google Test Cases</span>
+                  {generatedCode?.gtest_code && (
+                    <button
+                      onClick={() => copyToClipboard(generatedCode.gtest_code, 'Google Test')}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-surface-800 text-surface-300 hover:text-surface-100 hover:bg-surface-700 transition-colors"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                      Copy Test Code
+                    </button>
+                  )}
+                </div>
+                <div className="flex-1 min-h-0">
+                  {generatedCode?.gtest_code ? (
+                    <Editor
+                      height="100%"
+                      defaultLanguage="cpp"
+                      value={generatedCode.gtest_code}
+                      theme="vs-dark"
+                      options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-surface-500 text-sm">
+                      No Google Test cases generated.
+                    </div>
+                  )}
+                </div>
+              </div>
             )}
             {activeTab === 'tests' && testResults && (
               <div className="p-4 overflow-y-auto h-full space-y-4">
@@ -340,14 +489,6 @@ Example: Build a banking API with deposit, withdraw, and balance check functiona
                     </div>
                   </div>
                 ))}
-                {generatedCode?.gtest_code && (
-                  <div>
-                    <h4 className="text-xs font-semibold text-accent-400 uppercase tracking-wider mb-2">Google Test</h4>
-                    <div className="h-48 rounded-lg overflow-hidden border border-surface-800">
-                      <Editor height="100%" defaultLanguage="cpp" value={generatedCode.gtest_code} theme="vs-dark" options={{ readOnly: true, minimap: { enabled: false }, fontSize: 12 }} />
-                    </div>
-                  </div>
-                )}
               </div>
             )}
             {activeTab === 'execution' && executionResults && (

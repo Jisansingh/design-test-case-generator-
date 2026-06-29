@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { getProject, getProjectFiles, getProjectTimeline, getReport, deleteProject } from '../api'
+import Editor from '@monaco-editor/react'
+import { getProject, getProjectFiles, getProjectTimeline, getReport, getProjectFile, deleteProject } from '../api'
 import { Card } from '../components/common/Card'
 import { Button } from '../components/common/Button'
-import { PageSpinner } from '../components/common/Spinner'
+import { PageSpinner, Spinner } from '../components/common/Spinner'
 import { Modal } from '../components/common/Modal'
 import { formatDate, formatDuration, statusLabel } from '../utils/formatters'
+
+const FILE_LANG_MAP = {
+  cpp: 'cpp', c: 'c', h: 'cpp', hpp: 'cpp',
+  py: 'python', js: 'javascript', jsx: 'javascript',
+  java: 'java', json: 'json', txt: 'plaintext',
+  md: 'markdown', xml: 'xml', yaml: 'yaml', yml: 'yaml',
+  toml: 'plaintext', cfg: 'plaintext', ini: 'plaintext',
+  log: 'plaintext', out: 'plaintext',
+}
 
 export default function ProjectDetail() {
   const { name } = useParams()
@@ -15,10 +25,12 @@ export default function ProjectDetail() {
   const [timeline, setTimeline] = useState([])
   const [report, setReport] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [activeFile, setActiveFile] = useState(null)
-  const [fileContent, setFileContent] = useState('')
   const [showDelete, setShowDelete] = useState(false)
+
   const [previewFile, setPreviewFile] = useState(null)
+  const [fileContent, setFileContent] = useState('')
+  const [loadingFile, setLoadingFile] = useState(false)
+  const [fileError, setFileError] = useState(null)
 
   const decodedName = decodeURIComponent(name)
 
@@ -35,6 +47,27 @@ export default function ProjectDetail() {
       if (rRes.success) setReport(rRes.data?.report || null)
     }).catch(() => {}).finally(() => setLoading(false))
   }, [decodedName])
+
+  useEffect(() => {
+    if (!previewFile) {
+      setFileContent('')
+      setFileError(null)
+      return
+    }
+    setLoadingFile(true)
+    setFileError(null)
+    getProjectFile(decodedName, previewFile.name)
+      .then(res => {
+        if (res.success) setFileContent(res.data.content)
+        else setFileError(res.error?.message || 'Failed to load file')
+      })
+      .catch(() => setFileError('Failed to load file'))
+      .finally(() => setLoadingFile(false))
+  }, [decodedName, previewFile])
+
+  const handleOpenInWorkspace = () => {
+    navigate('/workspace', { state: { projectName: decodedName } })
+  }
 
   const handleDelete = async () => {
     await deleteProject(decodedName)
@@ -72,7 +105,7 @@ export default function ProjectDetail() {
           </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="secondary" onClick={() => navigate('/workspace')}>Open in Workspace</Button>
+          <Button variant="secondary" onClick={handleOpenInWorkspace}>Open in Workspace</Button>
           <Button variant="danger" onClick={() => setShowDelete(true)}>Delete</Button>
         </div>
       </div>
@@ -106,7 +139,11 @@ export default function ProjectDetail() {
                   <button
                     key={f.name}
                     onClick={() => setPreviewFile(f)}
-                    className="text-left p-3 rounded-lg border text-sm transition-colors bg-surface-900/50 border-surface-800 hover:border-surface-700"
+                    className={`text-left p-3 rounded-lg border text-sm transition-colors ${
+                      previewFile?.name === f.name
+                        ? 'bg-surface-800 border-accent-500/30'
+                        : 'bg-surface-900/50 border-surface-800 hover:border-surface-700'
+                    }`}
                   >
                     <p className="text-surface-200 truncate font-mono text-xs">{f.name}</p>
                     <p className="text-xs text-surface-600 mt-1">{(f.size / 1024).toFixed(1)} KB</p>
@@ -154,24 +191,21 @@ export default function ProjectDetail() {
       </div>
 
       <Modal open={!!previewFile} onClose={() => setPreviewFile(null)} title={previewFile?.name}>
-        <div className="space-y-4 text-sm">
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { label: 'Name', value: previewFile?.name },
-              { label: 'Size', value: previewFile?.size ? `${(previewFile.size / 1024).toFixed(1)} KB` : '-' },
-              { label: 'Modified', value: previewFile?.modified ? formatDate(previewFile.modified) : '-' },
-            ].map(s => (
-              <div key={s.label} className="bg-surface-900 rounded-lg p-3">
-                <p className="text-xs text-surface-500 uppercase tracking-wider mb-1">{s.label}</p>
-                <p className="text-sm text-surface-200 font-mono">{s.value}</p>
-              </div>
-            ))}
+        {loadingFile ? (
+          <div className="flex items-center justify-center py-16"><Spinner size="lg" /></div>
+        ) : fileError ? (
+          <div className="flex items-center justify-center py-16 text-surface-500 text-sm">{fileError}</div>
+        ) : (
+          <div className="h-96 rounded-lg overflow-hidden border border-surface-800">
+            <Editor
+              height="100%"
+              defaultLanguage={FILE_LANG_MAP[previewFile?.name?.split('.').pop()] || 'plaintext'}
+              value={fileContent}
+              theme="vs-dark"
+              options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
+            />
           </div>
-          <div className="bg-surface-900 rounded-lg p-4 text-center">
-            <p className="text-surface-500 text-sm">File preview is not available</p>
-            <p className="text-surface-600 text-xs mt-1">Download the project files to view this file locally.</p>
-          </div>
-        </div>
+        )}
       </Modal>
 
       <Modal open={showDelete} onClose={() => setShowDelete(false)} title="Delete Project">

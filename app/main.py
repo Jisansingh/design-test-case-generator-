@@ -444,6 +444,17 @@ def list_project_files(project_name: str):
     return success_response(data=files, message=f"Found {len(files)} files")
 
 
+@app.get("/projects/{project_name}/file/{file_name}")
+def get_project_file(project_name: str, file_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    safe_name = Path(file_name).name
+    content = ws.load_file(project_name, safe_name)
+    if content is None:
+        return error_response("not_found", f"File '{safe_name}' not found in project '{project_name}'")
+    return success_response(data={"name": safe_name, "content": content}, message="File found")
+
+
 @app.get("/projects/{project_name}/timeline")
 def get_project_timeline(project_name: str):
     if not ws.project_exists(project_name):
