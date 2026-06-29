@@ -1,3 +1,27 @@
+# Python
 venv/
-.env
+.venv/
 __pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Project folders
+workspace/
+logs/
+
+# Node
+node_modules/
+frontend/node_modules/
+
+# Build
+dist/
+frontend/dist/
+
+# Vite
+.vite/
+frontend/.vite/
+
+# OS
+.DS_Store

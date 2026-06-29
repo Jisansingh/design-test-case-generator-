@@ -1,10 +1,12 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, List, Optional
+from datetime import datetime
 
 
 class DesignInput(BaseModel):
     design: str
     language: Optional[str] = None
+    project_name: Optional[str] = None
 
 
 class TestCases(BaseModel):
@@ -37,6 +39,7 @@ class CrashReportInput(BaseModel):
     signal: Optional[int] = None
     stderr: Optional[str] = None
     backtrace_frames: Optional[List[BacktraceFrame]] = None
+    project_name: Optional[str] = None
 
 
 class CrashReportOutput(BaseModel):
@@ -49,6 +52,7 @@ class CrashReportOutput(BaseModel):
 class UserCrashAnalysisInput(BaseModel):
     code: str
     language: str
+    project_name: Optional[str] = None
 
 
 class UserCrashAnalysisOutput(BaseModel):
@@ -62,3 +66,70 @@ class UserCrashAnalysisOutput(BaseModel):
 
 class ErrorResponse(BaseModel):
     detail: str
+
+
+class ProjectInfo(BaseModel):
+    project_name: str
+    language: str
+    created_at: str
+    updated_at: str
+    status: str
+    generated_tests: int
+    passed: int
+    failed: int
+    success_rate: float
+    generation_time: str
+    compilation_time: str
+    execution_time: str
+    report_generation_time: str
+    last_report: str
+
+
+class FileInfo(BaseModel):
+    name: str
+    size: int
+    modified: str
+
+
+class ProjectListResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[List[ProjectInfo]] = None
+
+
+class ProjectDetailResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[ProjectInfo] = None
+
+
+class FileListResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[List[FileInfo]] = None
+
+
+class ReportInfo(BaseModel):
+    project_name: str
+    report_file: str
+    generated_at: str
+    size: int
+
+
+class ReportListResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[List[ReportInfo]] = None
+
+
+class TimelineEntry(BaseModel):
+    step: str
+    status: str
+    duration: Optional[str] = None
+    timestamp: Optional[str] = None
+
+
+class TimelineResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[List[TimelineEntry]] = None

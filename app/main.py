@@ -1,15 +1,40 @@
+import json
 import logging
 import os
 import tempfile
+import time
+from datetime import datetime
+from pathlib import Path
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+
+from app.config import CORS_ORIGINS
+from app.log_setup import setup_logging
+from app.workspace_manager import WorkspaceManager, derive_project_name, get_extension
+from app.responses import success_response, error_response
 from app.llm_service import generate_test_cases, generate_code
-from app.schemas import DesignInput, TestCases, CodeGenOutput, CrashAnalysisOutput, CrashReportInput, CrashReportOutput, UserCrashAnalysisInput, UserCrashAnalysisOutput
+from app.schemas import (
+    DesignInput,
+    TestCases,
+    CodeGenOutput,
+    CrashAnalysisOutput,
+    CrashReportInput,
+    CrashReportOutput,
+    UserCrashAnalysisInput,
+    UserCrashAnalysisOutput,
+)
 from app.execution_service import execute_test_cases, generate_text_report
 from app.crash_service import simulate_crash, analyze_user_code
 from app.crash_ai_service import analyze_backtrace
-# Standard basic logging configuration
+
+loggers = setup_logging()
+server_log = loggers["server"]
+execution_log = loggers["execution"]
+compiler_log = loggers["compiler"]
+crash_log = loggers["crash"]
+report_log = loggers["report"]
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -21,33 +46,74 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:5175",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+ws = WorkspaceManager()
+
+
+def _ensure_project(request, design: str) -> str:
+    project_name = request.project_name or derive_project_name(design)
+    lang = getattr(request, "language", None) or ""
+    ws.create_project(project_name, lang, description=design)
+    return project_name
+
+
+def _save_code_result(project_name: str, result: dict) -> None:
+    ext = get_extension(result["language"])
+    ws.save_file(project_name, f"generated_code.{ext}", result["code"])
+    if result.get("gtest_code"):
+        ws.save_file(project_name, "gtest.cpp", result["gtest_code"])
+
+
+def _save_test_cases(project_name: str, result: dict) -> None:
+    ws.save_file(project_name, "generated_tests.json", json.dumps(result, indent=2))
+
+
+def _save_execution_result(project_name: str, result: dict) -> None:
+    ws.save_file(project_name, "execution_result.json", json.dumps(result, indent=2))
+
+
+def _save_report(project_name: str, report_text: str) -> None:
+    ws.save_file(project_name, "report.txt", report_text)
+
+
+def _update_stats_from_execution(project_name: str, exec_result: dict, duration: float) -> None:
+    total = exec_result["summary"]["total"]
+    passed = exec_result["summary"]["passed"]
+    failed = exec_result["summary"]["failed"]
+    rate = round((passed / max(total, 1)) * 100, 2)
+    ws.update_metadata(project_name, {
+        "status": "tests_executed",
+        "generated_tests": total,
+        "passed": passed,
+        "failed": failed,
+        "success_rate": rate,
+        "execution_time": f"{duration:.2f} sec",
+    })
+
 
 @app.get("/")
 def root():
+    server_log.info("Health check")
     return {"status": "ok", "message": "AI Test Generator is running"}
 
 
 @app.post("/generate-tests", response_model=TestCases)
 def generate_tests(request: DesignInput):
-    # Input Validation
     if not request.design.strip():
         raise HTTPException(status_code=400, detail="Design description cannot be empty")
 
-    logger.info(f"Generating tests for design description starting with: {request.design[:50]}...")
+    project_name = _ensure_project(request, request.design)
+    server_log.info("Generating tests for project '%s'", project_name)
 
-    # Call the service layer
+    start = time.time()
     result = generate_test_cases(request.design)
+    duration = time.time() - start
 
-    # Validate that we actually got tests back
     total_cases = len(result["functional"]) + len(result["edge_cases"]) + len(result["security"])
     if total_cases == 0:
         raise HTTPException(
@@ -55,18 +121,34 @@ def generate_tests(request: DesignInput):
             detail="AI model returned empty response. Please try again with a more detailed design description.",
         )
 
-    # FastAPI will automatically validate and parse this dictionary into the TestCases schema
+    _save_test_cases(project_name, result)
+    ws.update_metadata(project_name, {
+        "status": "tests_generated",
+        "generated_tests": total_cases,
+        "generation_time": f"{duration:.2f} sec",
+    })
+    ws.add_timeline_entry(project_name, {
+        "step": "Generate Test Cases",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    execution_log.info("Generated %d tests for project '%s' in %.2fs", total_cases, project_name, duration)
     return result
+
 
 @app.post("/generate-code", response_model=CodeGenOutput, response_model_exclude_none=True)
 def generate_code_endpoint(request: DesignInput):
     if not request.design.strip():
         raise HTTPException(status_code=400, detail="Design description cannot be empty")
 
-    logger.info(f"Generating code for design description starting with: {request.design[:50]}...")
+    project_name = _ensure_project(request, request.design)
+    server_log.info("Generating code for project '%s'", project_name)
 
     try:
+        start = time.time()
         result = generate_code(request.design, request.language)
+        duration = time.time() - start
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -76,7 +158,186 @@ def generate_code_endpoint(request: DesignInput):
             detail="AI model returned empty response. Please try again with a more detailed design description.",
         )
 
+    _save_code_result(project_name, result)
+    ws.update_metadata(project_name, {
+        "language": result["language"],
+        "status": "code_generated",
+        "generation_time": f"{duration:.2f} sec",
+    })
+    ws.add_timeline_entry(project_name, {
+        "step": "Generate Code",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    server_log.info("Generated %s code for project '%s' in %.2fs", result["language"], project_name, duration)
     return result
+
+
+@app.post("/execute-tests")
+def execute_tests(request: DesignInput):
+    project_name = _ensure_project(request, request.design)
+    server_log.info("Executing tests for project '%s'", project_name)
+
+    existing_tests = ws.load_file(project_name, "generated_tests.json")
+    if existing_tests:
+        generated = json.loads(existing_tests)
+        execution_log.info("Using cached test cases for project '%s'", project_name)
+    else:
+        generated = generate_test_cases(request.design)
+        _save_test_cases(project_name, generated)
+
+    start = time.time()
+    execution_result = execute_test_cases(
+        generated["functional"],
+        generated["edge_cases"],
+        generated["security"],
+    )
+    duration = time.time() - start
+
+    _save_execution_result(project_name, execution_result)
+    _update_stats_from_execution(project_name, execution_result, duration)
+    ws.add_timeline_entry(project_name, {
+        "step": "Execute Tests",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    execution_log.info(
+        "Executed %d tests for project '%s': %d passed, %d failed in %.2fs",
+        execution_result["summary"]["total"],
+        project_name,
+        execution_result["summary"]["passed"],
+        execution_result["summary"]["failed"],
+        duration,
+    )
+    return execution_result
+
+
+@app.post("/generate-report")
+def generate_report(request: DesignInput):
+    project_name = _ensure_project(request, request.design)
+    server_log.info("Generating report for project '%s'", project_name)
+
+    existing_exec = ws.load_file(project_name, "execution_result.json")
+    if existing_exec:
+        execution_result = json.loads(existing_exec)
+        report_log.info("Using cached execution results for project '%s'", project_name)
+    else:
+        existing_tests = ws.load_file(project_name, "generated_tests.json")
+        if existing_tests:
+            generated = json.loads(existing_tests)
+        else:
+            generated = generate_test_cases(request.design)
+            _save_test_cases(project_name, generated)
+
+        execution_result = execute_test_cases(
+            generated["functional"],
+            generated["edge_cases"],
+            generated["security"],
+        )
+        _save_execution_result(project_name, execution_result)
+        _update_stats_from_execution(project_name, execution_result, 0.0)
+
+    start = time.time()
+    report_text = generate_text_report(execution_result)
+    duration = time.time() - start
+
+    _save_report(project_name, report_text)
+    ws.update_metadata(project_name, {
+        "status": "report_generated",
+        "last_report": datetime.now().isoformat(),
+        "report_generation_time": f"{duration:.2f} sec",
+    })
+    ws.add_timeline_entry(project_name, {
+        "step": "Generate Report",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    report_log.info("Generated report for project '%s' in %.2fs", project_name, duration)
+    return {"report": report_text}
+
+
+@app.post("/download-report")
+def download_report(request: DesignInput):
+    project_name = _ensure_project(request, request.design)
+    server_log.info("Downloading report for project '%s'", project_name)
+
+    existing_report = ws.load_file(project_name, "report.txt")
+    if existing_report is None:
+        existing_exec = ws.load_file(project_name, "execution_result.json")
+        if existing_exec:
+            execution_result = json.loads(existing_exec)
+        else:
+            existing_tests = ws.load_file(project_name, "generated_tests.json")
+            if existing_tests:
+                generated = json.loads(existing_tests)
+            else:
+                generated = generate_test_cases(request.design)
+                _save_test_cases(project_name, generated)
+
+            execution_result = execute_test_cases(
+                generated["functional"],
+                generated["edge_cases"],
+                generated["security"],
+            )
+            _save_execution_result(project_name, execution_result)
+            _update_stats_from_execution(project_name, execution_result, 0.0)
+
+        report_text = generate_text_report(execution_result)
+        _save_report(project_name, report_text)
+        ws.update_metadata(project_name, {
+            "status": "report_generated",
+            "last_report": datetime.now().isoformat(),
+        })
+        ws.add_timeline_entry(project_name, {
+            "step": "Generate Report",
+            "status": "completed",
+        })
+
+    report_path = ws.get_project_dir(project_name) / "report.txt"
+    report_log.info("Serving report for project '%s'", project_name)
+    return FileResponse(
+        path=str(report_path),
+        media_type="text/plain",
+        filename="report.txt",
+    )
+
+
+@app.post("/analyze-crash", response_model=CrashAnalysisOutput)
+def analyze_crash():
+    project_name = "crash_simulation"
+    ws.create_project(project_name, "cpp")
+    server_log.info("Running crash simulation for project '%s'", project_name)
+
+    try:
+        start = time.time()
+        result = simulate_crash()
+        duration = time.time() - start
+
+        ws.save_file(project_name, "crash_analysis.json", json.dumps(result, indent=2))
+        ws.update_metadata(project_name, {
+            "status": "crash_simulated",
+            "compilation_time": f"{duration:.2f} sec",
+        })
+        ws.add_timeline_entry(project_name, {
+            "step": "Crash Simulation",
+            "status": "completed",
+            "duration": f"{duration:.2f} sec",
+        })
+
+        crash_log.info("Crash simulation completed with %d frames in %.2fs", len(result["backtrace"]), duration)
+        return result
+
+    except RuntimeError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        crash_log.error("Crash simulation failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Crash analysis failed. Ensure g++ and lldb are installed.",
+        )
 
 
 @app.post("/analyze-crash-report", response_model=CrashReportOutput)
@@ -84,7 +345,11 @@ def analyze_crash_report(request: CrashReportInput):
     if not request.backtrace:
         raise HTTPException(status_code=400, detail="Backtrace cannot be empty")
 
-    logger.info(f"Analyzing backtrace with {len(request.backtrace)} frames...")
+    project_name = request.project_name or "crash_simulation"
+    ws.create_project(project_name, "cpp")
+    server_log.info("Analyzing crash report for project '%s' (%d frames)", project_name, len(request.backtrace))
+
+    start = time.time()
     result = analyze_backtrace(
         request.backtrace,
         code=request.code,
@@ -92,123 +357,138 @@ def analyze_crash_report(request: CrashReportInput):
         stderr=request.stderr,
         backtrace_frames=request.backtrace_frames,
     )
+    duration = time.time() - start
+
+    existing = json.loads(ws.load_file(project_name, "crash_analysis.json") or "{}")
+    existing["ai_analysis"] = result
+    ws.save_file(project_name, "crash_analysis.json", json.dumps(existing, indent=2))
+    ws.add_timeline_entry(project_name, {
+        "step": "AI Crash Analysis",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    crash_log.info("AI crash analysis completed in %.2fs for project '%s'", duration, project_name)
     return result
-
-
-@app.post("/analyze-crash", response_model=CrashAnalysisOutput)
-def analyze_crash():
-    logger.info("Running crash simulation and backtrace analysis...")
-    try:
-        result = simulate_crash()
-        logger.info(f"Crash analysis complete: {len(result['backtrace'])} frames")
-        return result
-    except RuntimeError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(f"Crash analysis failed: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="Crash analysis failed. Ensure g++ and lldb are installed.",
-        )
 
 
 @app.post("/analyze-user-crash", response_model=UserCrashAnalysisOutput)
 def analyze_user_crash(request: UserCrashAnalysisInput):
-    logger.info(f"Analyzing user {request.language} code for crashes...")
+    project_name = request.project_name or derive_project_name(f"user_crash_{request.language}")
+    ws.create_project(project_name, request.language)
+    server_log.info("Analyzing user code for project '%s'", project_name)
+
     try:
+        start = time.time()
         result = analyze_user_code(request.code, request.language)
-        logger.info(f"User crash analysis complete: crashed={result['crashed']}, signal={result['signal']}")
+        duration = time.time() - start
+
+        ws.save_file(project_name, "crash_analysis.json", json.dumps(result, indent=2))
+        ws.update_metadata(project_name, {
+            "status": "crashed" if result["crashed"] else "ok",
+            "compilation_time": f"{duration:.2f} sec",
+        })
+        ws.add_timeline_entry(project_name, {
+            "step": "User Code Crash Analysis",
+            "status": "completed",
+            "duration": f"{duration:.2f} sec",
+        })
+
+        crash_log.info(
+            "User code analysis: crashed=%s, signal=%s, duration=%.2fs",
+            result["crashed"], result["signal"], duration,
+        )
         return result
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except RuntimeError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.error(f"User crash analysis failed: {e}")
+        crash_log.error("User crash analysis failed: %s", e)
         raise HTTPException(
             status_code=500,
             detail="Crash analysis failed. Ensure gcc/g++ and lldb are installed.",
         )
 
 
-@app.post("/execute-tests")
-def execute_tests(request: DesignInput):
-    # Generate test cases using the LLM
-    generated = generate_test_cases(request.design)
-
-    # Pull out each category of tests
-    functional_tests = generated["functional"]
-    edge_cases_tests = generated["edge_cases"]
-    security_tests = generated["security"]
-
-    # Pass each category separately so the report stays organized
-    execution_result = execute_test_cases(
-        functional_tests,
-        edge_cases_tests,
-        security_tests
-    )
-
-    return execution_result
+@app.get("/projects")
+def list_projects():
+    projects = ws.list_projects()
+    server_log.info("Listed %d projects", len(projects))
+    return success_response(data=projects, message=f"Found {len(projects)} projects")
 
 
-@app.post("/generate-report")
-def generate_report(request: DesignInput):
-    # Step 1: Generate test cases using the LLM
-    generated = generate_test_cases(request.design)
-
-    # Step 2: Pull out each category of tests
-    functional_tests = generated["functional"]
-    edge_cases_tests = generated["edge_cases"]
-    security_tests = generated["security"]
-
-    # Step 3: Execute all the test cases
-    execution_result = execute_test_cases(
-        functional_tests,
-        edge_cases_tests,
-        security_tests
-    )
-
-    # Step 4: Convert the execution result into a plain text report
-    report_text = generate_text_report(execution_result)
-
-    # Step 5: Return the report as JSON
-    return {"report": report_text}
+@app.get("/projects/{project_name}")
+def get_project(project_name: str):
+    project = ws.get_project(project_name)
+    if project is None:
+        return error_response("not_found", f"Project '{project_name}' not found")
+    return success_response(data=project, message="Project found")
 
 
-@app.post("/download-report")
-def download_report(request: DesignInput, background_tasks: BackgroundTasks):
-    # Step 1: Generate test cases using the LLM
-    generated = generate_test_cases(request.design)
+@app.delete("/projects/{project_name}")
+def delete_project(project_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    ws.delete_project(project_name)
+    server_log.info("Deleted project '%s'", project_name)
+    return success_response(message=f"Project '{project_name}' deleted")
 
-    # Step 2: Pull out each category of tests
-    functional_tests = generated["functional"]
-    edge_cases_tests = generated["edge_cases"]
-    security_tests = generated["security"]
 
-    # Step 3: Execute all the test cases
-    execution_result = execute_test_cases(
-        functional_tests,
-        edge_cases_tests,
-        security_tests
-    )
+@app.get("/projects/{project_name}/files")
+def list_project_files(project_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    files = ws.list_files(project_name)
+    return success_response(data=files, message=f"Found {len(files)} files")
 
-    # Step 4: Generate the plain text report
-    report_text = generate_text_report(execution_result)
 
-    # Step 5: Write the report to a temporary .txt file
-    # Using delete=False so the file stays around for FileResponse to read
-    temp_file = tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".txt",
-        delete=False
-    )
-    temp_file.write(report_text)
-    temp_file.close()
-    background_tasks.add_task(os.unlink, temp_file.name)
+@app.get("/projects/{project_name}/timeline")
+def get_project_timeline(project_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    timeline = ws.get_timeline(project_name)
+    return success_response(data=timeline, message=f"Found {len(timeline)} timeline entries")
 
-    # Step 6: Return the file as a download
-    return FileResponse(
-        path=temp_file.name,
-        media_type="text/plain",
-        filename="report.txt"
-    )
+
+@app.get("/reports")
+def list_reports():
+    projects = ws.list_projects()
+    reports = []
+    for p in projects:
+        pname = p.get("project_name", "")
+        report_content = ws.load_file(pname, "report.txt")
+        if report_content is not None:
+            report_path = ws.get_project_dir(pname) / "report.txt"
+            stat = report_path.stat() if report_path.exists() else None
+            reports.append({
+                "project_name": pname,
+                "report_file": "report.txt",
+                "generated_at": p.get("last_report", ""),
+                "size": stat.st_size if stat else 0,
+            })
+    return success_response(data=reports, message=f"Found {len(reports)} reports")
+
+
+@app.get("/reports/{project_name}")
+def get_report(project_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    report_text = ws.load_file(project_name, "report.txt")
+    if report_text is None:
+        return error_response("not_found", f"No report found for project '{project_name}'")
+    return success_response(data={"project_name": project_name, "report": report_text}, message="Report found")
+
+
+@app.delete("/reports/{project_name}")
+def delete_report(project_name: str):
+    if not ws.project_exists(project_name):
+        return error_response("not_found", f"Project '{project_name}' not found")
+    report_path = ws.get_project_dir(project_name) / "report.txt"
+    if not report_path.exists():
+        return error_response("not_found", f"No report found for project '{project_name}'")
+    os.remove(str(report_path))
+    ws.update_metadata(project_name, {"status": "report_deleted", "last_report": ""})
+    report_log.info("Deleted report for project '%s'", project_name)
+    return success_response(message=f"Report deleted for project '{project_name}'")

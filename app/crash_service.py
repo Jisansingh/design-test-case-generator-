@@ -3,9 +3,10 @@ import re
 import signal
 import subprocess
 import tempfile
+import time
 import logging
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("compiler")
 
 CRASH_PROGRAM_SOURCE = """
 #include <iostream>
@@ -37,13 +38,26 @@ def write_source_file(directory: str) -> str:
     return path
 
 
-def compile_program(source_path: str, output_path: str) -> None:
-    result = subprocess.run(
-        ["g++", "-g", "-o", output_path, source_path],
-        capture_output=True, text=True,
-    )
+def _run_compiler(command: list) -> subprocess.CompletedProcess:
+    logger.info(f"Starting compilation...")
+    logger.info(f"Compiler command: {' '.join(command)}")
+    start = time.time()
+    result = subprocess.run(command, capture_output=True, text=True)
+    duration = time.time() - start
     if result.returncode != 0:
+        logger.error(f"Compilation failed (exit code {result.returncode})")
+        if result.stderr:
+            logger.error(f"Compiler stderr:\n{result.stderr.strip()}")
+        logger.info(f"Compilation time: {duration:.2f} sec")
         raise RuntimeError(f"Compilation failed: {result.stderr}")
+    logger.info(f"Compilation completed successfully")
+    logger.info(f"Compilation time: {duration:.2f} sec")
+    return result
+
+
+def compile_program(source_path: str, output_path: str) -> None:
+    command = ["g++", "-g", "-o", output_path, source_path]
+    _run_compiler(command)
     logger.info(f"Compiled {source_path} -> {output_path}")
 
 
@@ -126,12 +140,8 @@ def _compile_user_code(code: str, language: str, tmpdir: str) -> tuple:
     binary_path = os.path.join(tmpdir, "user_code")
     with open(source_path, "w") as f:
         f.write(code)
-    result = subprocess.run(
-        [compiler, "-g", "-o", binary_path, source_path],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"Compilation failed: {result.stderr}")
+    command = [compiler, "-g", "-o", binary_path, source_path]
+    _run_compiler(command)
     logger.info(f"Compiled user {language} code -> {binary_path}")
     return source_path, binary_path
 
