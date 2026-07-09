@@ -28,6 +28,7 @@ export default function Workspace() {
   const [reportText, setReportText] = useState(null)
   const [crashResult, setCrashResult] = useState(null)
   const [crashReport, setCrashReport] = useState(null)
+  const [programOutput, setProgramOutput] = useState(null)
 
   const [timeline, setTimeline] = useState([])
   const [logs, setLogs] = useState([])
@@ -62,6 +63,7 @@ export default function Workspace() {
     setReportText(null)
     setCrashResult(null)
     setCrashReport(null)
+    setProgramOutput(null)
     setTimeline([])
     setLogs([])
     setActiveBottomTab('timeline')
@@ -100,12 +102,13 @@ export default function Workspace() {
 
       const ext = LANG_TO_EXT[meta.language] || 'txt'
       const codeFile = `generated_code.${ext}`
-      const [codeRes, testsRes, execRes, crashRes, gtestRes] = await Promise.all([
+      const [codeRes, testsRes, execRes, crashRes, gtestRes, outputRes] = await Promise.all([
         api.getProjectFile(restoreName, codeFile).catch(() => null),
         api.getProjectFile(restoreName, 'generated_tests.json').catch(() => null),
         api.getProjectFile(restoreName, 'execution_result.json').catch(() => null),
         api.getProjectFile(restoreName, 'crash_analysis.json').catch(() => null),
         api.getProjectFile(restoreName, 'gtest.cpp').catch(() => null),
+        api.getProjectFile(restoreName, 'output.json').catch(() => null),
       ])
 
       if (codeRes?.success) {
@@ -127,6 +130,10 @@ export default function Workspace() {
           setCrashResult(crash)
           if (crash.ai_analysis) setCrashReport(crash.ai_analysis)
         } catch { /* ignore parse errors */ }
+      }
+
+      if (outputRes?.success) {
+        try { setProgramOutput(JSON.parse(outputRes.data.content)) } catch { /* ignore parse errors */ }
       }
 
       addLog(`Workspace restored for project '${restoreName}'`, 'success')
@@ -314,6 +321,33 @@ export default function Workspace() {
     }
   }
 
+  const handleRunProgram = async () => {
+    if (!generatedCode?.code) {
+      setError('Generate code first before running the program.')
+      return
+    }
+    setRunning('run')
+    setError(null)
+    const pn = projectName || deriveName(design)
+    try {
+      addLog('Compiling and running program...', 'info')
+      const res = await api.runProgram(generatedCode.code, generatedCode.language, pn)
+      setProgramOutput(res)
+      addLog(res.success ? 'Program ran successfully' : 'Compilation failed', res.success ? 'success' : 'error')
+      setActiveTab('output')
+
+      const meta = await api.getProject(pn)
+      if (meta.success) setProjectStats(meta.data)
+      const tl = await api.getProjectTimeline(pn)
+      if (tl.success) setTimeline(tl.data)
+    } catch (e) {
+      setError(e.response?.data?.detail || e.message)
+      addLog(`Program run failed: ${e.message}`, 'error')
+    } finally {
+      setRunning(null)
+    }
+  }
+
   const copyToClipboard = useCallback((text, label = 'Code') => {
     navigator.clipboard.writeText(text).then(() => {
       if (copyTimeout.current) clearTimeout(copyTimeout.current)
@@ -327,13 +361,15 @@ export default function Workspace() {
   }, [])
 
   const showGTest = generatedCode?.language === 'cpp'
+  const showOutput = generatedCode?.language === 'c' || generatedCode?.language === 'cpp'
 
   const tabs = [
     { id: 'code', label: 'Code', disabled: !generatedCode },
+    { id: 'output', label: 'Output', disabled: !showOutput || !programOutput },
+    { id: 'gtest', label: 'Google Test', disabled: !showGTest },
     { id: 'tests', label: 'Test Cases', disabled: !testResults },
     { id: 'execution', label: 'Execution', disabled: !executionResults },
     { id: 'crash', label: 'Crash Analysis', disabled: !crashReport },
-    { id: 'gtest', label: 'Google Test', disabled: !showGTest },
     { id: 'report', label: 'Reports', disabled: !reportText },
   ]
 
@@ -348,6 +384,7 @@ export default function Workspace() {
     { label: 'Execute Tests', onClick: handleExecuteTests, loading: running === 'execute', variant: 'secondary' },
     { label: 'Generate Report', onClick: handleGenerateReport, loading: running === 'report', variant: 'secondary' },
     { label: 'Analyze Crash', onClick: handleCrashAnalysis, loading: running === 'crash', variant: 'danger' },
+    { label: 'Run Program', onClick: handleRunProgram, loading: running === 'run', variant: 'secondary' },
   ]
 
   if (restoringProject) return <PageSpinner />
@@ -455,6 +492,78 @@ Example: Build a banking API with deposit, withdraw, and balance check functiona
                     theme="vs-dark"
                     options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
                   />
+                </div>
+              </div>
+            )}
+            {activeTab === 'output' && programOutput && (
+              <div className="h-full flex flex-col">
+                <div className="flex items-center justify-between px-4 py-2 bg-surface-900 border-b border-surface-800">
+                  <span className="text-xs text-surface-400 font-mono">
+                    {programOutput.success ? 'Program Output' : 'Compilation Failed'}
+                  </span>
+                  <button
+                    onClick={() => {
+                      const text = programOutput.success
+                        ? `Exit code: ${programOutput.exit_code}\nExecution time: ${programOutput.execution_time.toFixed(3)}s\n\n${programOutput.output}${programOutput.errors ? '\n\nStderr:\n' + programOutput.errors : ''}`
+                        : `Compilation failed (exit code ${programOutput.exit_code})\n\n${programOutput.errors}`
+                      copyToClipboard(text, 'Output')
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium bg-surface-800 text-surface-300 hover:text-surface-100 hover:bg-surface-700 transition-colors"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                    Copy Output
+                  </button>
+                </div>
+                <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
+                  {programOutput.success ? (
+                    <>
+                      <div className="flex gap-3">
+                        <div className="bg-surface-900 rounded-lg px-3 py-2 text-center flex-1">
+                          <p className="text-xs text-surface-500 uppercase tracking-wider">Exit Code</p>
+                          <p className={`text-lg font-bold mt-1 ${programOutput.exit_code === 0 ? 'text-accent-400' : 'text-red-400'}`}>
+                            {programOutput.exit_code}
+                          </p>
+                        </div>
+                        <div className="bg-surface-900 rounded-lg px-3 py-2 text-center flex-1">
+                          <p className="text-xs text-surface-500 uppercase tracking-wider">Time</p>
+                          <p className="text-lg font-bold mt-1 text-surface-200">
+                            {programOutput.execution_time.toFixed(3)}s
+                          </p>
+                        </div>
+                      </div>
+                      {programOutput.output && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-accent-400 uppercase tracking-wider mb-1.5">stdout</h4>
+                          <pre className="bg-surface-900 text-surface-300 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-64">{programOutput.output || '(no output)'}</pre>
+                        </div>
+                      )}
+                      {programOutput.errors && (
+                        <div>
+                          <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1.5">stderr</h4>
+                          <pre className="bg-red-600/5 border border-red-600/20 text-red-300 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-32">{programOutput.errors}</pre>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <div className="flex gap-3">
+                        <div className="bg-surface-900 rounded-lg px-3 py-2 text-center flex-1">
+                          <p className="text-xs text-surface-500 uppercase tracking-wider">Compiler Exit Code</p>
+                          <p className="text-lg font-bold mt-1 text-red-400">{programOutput.exit_code}</p>
+                        </div>
+                        <div className="bg-surface-900 rounded-lg px-3 py-2 text-center flex-1">
+                          <p className="text-xs text-surface-500 uppercase tracking-wider">Compile Time</p>
+                          <p className="text-lg font-bold mt-1 text-surface-200">
+                            {programOutput.execution_time.toFixed(3)}s
+                          </p>
+                        </div>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-semibold text-red-400 uppercase tracking-wider mb-1.5">Compiler Errors</h4>
+                        <pre className="bg-red-600/5 border border-red-600/20 text-red-300 rounded-lg p-3 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-96">{programOutput.errors}</pre>
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}

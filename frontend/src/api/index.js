@@ -94,6 +94,13 @@ export async function getProjectFile(name, fileName) {
   return data
 }
 
+export async function runProgram(code, language, projectName = null) {
+  const body = { code, language }
+  if (projectName) body.project_name = projectName
+  const { data } = await api.post('/run-program', body)
+  return data
+}
+
 export async function getReports() {
   const { data } = await api.get('/reports')
   return data

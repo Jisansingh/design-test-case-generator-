@@ -25,7 +25,7 @@ from app.schemas import (
     UserCrashAnalysisOutput,
 )
 from app.execution_service import execute_test_cases, generate_text_report
-from app.crash_service import simulate_crash, analyze_user_code
+from app.crash_service import simulate_crash, analyze_user_code, compile_and_run_program
 from app.crash_ai_service import analyze_backtrace
 
 loggers = setup_logging()
@@ -403,6 +403,39 @@ def analyze_user_crash(request: UserCrashAnalysisInput):
             status_code=500,
             detail="Crash analysis failed. Ensure gcc/g++ and lldb are installed.",
         )
+
+
+COMPILE_LANGUAGES = {"c", "cpp"}
+
+
+@app.post("/run-program")
+def run_program(request: UserCrashAnalysisInput):
+    server_log.info("Running program for project '%s'", request.project_name or "(no project)")
+
+    if request.language not in COMPILE_LANGUAGES:
+        raise HTTPException(status_code=400, detail=f"Compilation not supported for language: {request.language}")
+
+    start = time.time()
+    result = compile_and_run_program(request.code, request.language)
+    duration = time.time() - start
+
+    project_name = request.project_name
+    if project_name and ws.project_exists(project_name):
+        ws.save_file(project_name, "output.json", json.dumps(result, indent=2))
+        ws.update_metadata(project_name, {
+            "program_output_time": f"{duration:.2f} sec",
+        })
+        ws.add_timeline_entry(project_name, {
+            "step": "Run Program",
+            "status": "completed" if result["success"] else "failed",
+            "duration": f"{duration:.2f} sec",
+        })
+
+    server_log.info(
+        "Program run completed: success=%s, exit_code=%s, time=%.2fs",
+        result["success"], result["exit_code"], duration,
+    )
+    return result
 
 
 @app.get("/projects")

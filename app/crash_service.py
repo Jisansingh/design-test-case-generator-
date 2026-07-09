@@ -227,3 +227,50 @@ def simulate_crash() -> dict:
             "status": status,
             "backtrace": backtrace,
         }
+
+
+def compile_and_run_program(code: str, language: str) -> dict:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            compiler, ext = _get_compiler_and_extension(language)
+        except ValueError as e:
+            return {
+                "success": False,
+                "output": "",
+                "errors": str(e),
+                "exit_code": -1,
+                "execution_time": 0.0,
+            }
+
+        source_path = os.path.join(tmpdir, f"program{ext}")
+        binary_path = os.path.join(tmpdir, "program")
+        with open(source_path, "w") as f:
+            f.write(code)
+
+        start = time.time()
+        compile_result = subprocess.run(
+            [compiler, "-o", binary_path, source_path],
+            capture_output=True, text=True,
+        )
+        compile_time = time.time() - start
+
+        if compile_result.returncode != 0:
+            return {
+                "success": False,
+                "output": "",
+                "errors": compile_result.stderr,
+                "exit_code": compile_result.returncode,
+                "execution_time": compile_time,
+            }
+
+        start = time.time()
+        exec_result = _execute_with_timeout(binary_path)
+        exec_time = time.time() - start
+
+        return {
+            "success": True,
+            "output": exec_result["stdout"],
+            "errors": exec_result["stderr"],
+            "exit_code": exec_result["exit_code"],
+            "execution_time": exec_time,
+        }
