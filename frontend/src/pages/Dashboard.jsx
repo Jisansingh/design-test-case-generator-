@@ -55,24 +55,7 @@ export default function Dashboard() {
         ))}
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <Card>
-          <CardHeader title="Quick Actions" />
-          <div className="grid grid-cols-2 gap-2">
-            {[
-              { label: 'New Project', icon: 'M12 4v16m8-8H4', onClick: () => navigate('/workspace'), variant: 'primary' },
-              { label: 'Open Projects', icon: 'M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z', onClick: () => navigate('/projects'), variant: 'secondary' },
-              { label: 'Generate Code', icon: 'M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4', onClick: () => navigate('/workspace'), variant: 'secondary' },
-              { label: 'View Reports', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', onClick: () => navigate('/reports'), variant: 'secondary' },
-            ].map(a => (
-              <Button key={a.label} variant={a.variant} onClick={a.onClick} className="w-full justify-start">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d={a.icon} /></svg>
-                {a.label}
-              </Button>
-            ))}
-          </div>
-        </Card>
-
+      <div className="grid grid-cols-2 gap-4">
         <Card>
           <CardHeader title="Recent Projects" action={
             <Button variant="ghost" size="xs" onClick={() => navigate('/projects')}>View All</Button>
