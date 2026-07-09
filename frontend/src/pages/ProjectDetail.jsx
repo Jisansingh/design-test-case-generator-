@@ -190,23 +190,46 @@ export default function ProjectDetail() {
         </div>
       </div>
 
-      <Modal open={!!previewFile} onClose={() => setPreviewFile(null)} title={previewFile?.name}>
-        {loadingFile ? (
-          <div className="flex items-center justify-center py-16"><Spinner size="lg" /></div>
-        ) : fileError ? (
-          <div className="flex items-center justify-center py-16 text-surface-500 text-sm">{fileError}</div>
-        ) : (
-          <div className="h-96 rounded-lg overflow-hidden border border-surface-800">
-            <Editor
-              height="100%"
-              defaultLanguage={FILE_LANG_MAP[previewFile?.name?.split('.').pop()] || 'plaintext'}
-              value={fileContent}
-              theme="vs-dark"
-              options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
-            />
+      {previewFile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setPreviewFile(null)} />
+          <div className="relative bg-surface-900 border border-surface-700 rounded-2xl shadow-2xl w-[80vw] max-w-[1200px] min-w-[320px] h-[80vh] max-h-[900px] min-h-[300px] flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-surface-800 shrink-0">
+              <h2 className="text-lg font-semibold text-surface-100 truncate">{previewFile.name}</h2>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => navigator.clipboard.writeText(fileContent)}
+                  disabled={!fileContent || loadingFile || !!fileError}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-surface-800 text-surface-300 hover:text-surface-100 hover:bg-surface-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2" /><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1" /></svg>
+                  Copy
+                </button>
+                <button onClick={() => setPreviewFile(null)} className="text-surface-500 hover:text-surface-300 transition-colors">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 min-h-0">
+              {loadingFile ? (
+                <div className="flex items-center justify-center h-full"><Spinner size="lg" /></div>
+              ) : fileError ? (
+                <div className="flex items-center justify-center h-full text-surface-500 text-sm">{fileError}</div>
+              ) : (
+                <Editor
+                  height="100%"
+                  defaultLanguage={FILE_LANG_MAP[previewFile.name?.split('.').pop()] || 'plaintext'}
+                  value={fileContent}
+                  theme="vs-dark"
+                  options={{ readOnly: true, minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, padding: { top: 12 } }}
+                />
+              )}
+            </div>
           </div>
-        )}
-      </Modal>
+        </div>
+      )}
 
       <Modal open={showDelete} onClose={() => setShowDelete(false)} title="Delete Project">
         <p className="text-sm text-surface-400 mb-5">Delete <strong className="text-surface-200">{project.project_name}</strong>? All files will be permanently removed.</p>

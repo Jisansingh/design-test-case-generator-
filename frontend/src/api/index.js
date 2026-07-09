@@ -74,6 +74,11 @@ export async function deleteProject(name) {
   return data
 }
 
+export async function deleteAllProjects() {
+  const { data } = await api.delete('/projects')
+  return data
+}
+
 export async function getProjectFiles(name) {
   const { data } = await api.get(`/projects/${encodeURIComponent(name)}/files`)
   return data

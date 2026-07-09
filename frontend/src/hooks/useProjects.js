@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getProjects, deleteProject } from '../api'
+import { getProjects, deleteProject, deleteAllProjects } from '../api'
 
 export function useProjects() {
   const [list, setList] = useState([])
@@ -28,5 +28,11 @@ export function useProjects() {
     return res
   }, [])
 
-  return { projects: list, loading, error, refresh: fetch, remove }
+  const removeAll = useCallback(async () => {
+    const res = await deleteAllProjects()
+    if (res.success) setList([])
+    return res
+  }, [])
+
+  return { projects: list, loading, error, refresh: fetch, remove, removeAll }
 }

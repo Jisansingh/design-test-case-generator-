@@ -11,11 +11,13 @@ import { formatDate, statusLabel, languageColor } from '../utils/formatters'
 
 export default function Projects() {
   const navigate = useNavigate()
-  const { projects, loading, error, refresh, remove } = useProjects()
+  const { projects, loading, error, refresh, remove, removeAll } = useProjects()
   const [search, setSearch] = useState('')
   const [filterLang, setFilterLang] = useState('')
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [showDeleteAll, setShowDeleteAll] = useState(false)
+  const [deletingAll, setDeletingAll] = useState(false)
 
   const filtered = useMemo(() => {
     return projects.filter(p => {
@@ -35,6 +37,13 @@ export default function Projects() {
     await remove(deleteTarget)
     setDeleting(false)
     setDeleteTarget(null)
+  }
+
+  const handleDeleteAll = async () => {
+    setDeletingAll(true)
+    await removeAll()
+    setDeletingAll(false)
+    setShowDeleteAll(false)
   }
 
   if (loading) return <PageSpinner />
@@ -68,6 +77,9 @@ export default function Projects() {
           {langs.map(l => <option key={l} value={l}>{l || 'auto'}</option>)}
         </select>
         <Button variant="ghost" size="sm" onClick={refresh}>Refresh</Button>
+        <Button variant="danger" size="sm" disabled={projects.length === 0} onClick={() => setShowDeleteAll(true)}>
+          Delete All
+        </Button>
       </div>
 
       {filtered.length === 0 ? (
@@ -111,6 +123,14 @@ export default function Projects() {
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
           <Button variant="danger" loading={deleting} onClick={handleDelete}>Delete</Button>
+        </div>
+      </Modal>
+
+      <Modal open={showDeleteAll} onClose={() => setShowDeleteAll(false)} title="Delete All Projects?">
+        <p className="text-sm text-surface-400 mb-5">This will permanently delete all projects, generated code, reports, test cases, execution results, and crash analysis history. This action cannot be undone.</p>
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setShowDeleteAll(false)}>Cancel</Button>
+          <Button variant="danger" loading={deletingAll} onClick={handleDeleteAll}>Delete All</Button>
         </div>
       </Modal>
     </div>

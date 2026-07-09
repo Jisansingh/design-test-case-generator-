@@ -125,6 +125,17 @@ class WorkspaceManager:
         logger.info("Deleted project '%s'", project_name)
         return True
 
+    def delete_all_projects(self) -> int:
+        count = 0
+        if self.workspace_dir.exists():
+            for child in list(self.workspace_dir.iterdir()):
+                if child.is_dir():
+                    shutil.rmtree(child)
+                    count += 1
+            if count:
+                logger.info("Deleted all %d projects", count)
+        return count
+
     def save_file(self, project_name: str, filename: str, content: str) -> Path:
         pdir = self._project_dir(project_name)
         pdir.mkdir(parents=True, exist_ok=True)

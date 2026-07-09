@@ -307,25 +307,12 @@ def download_report(request: DesignInput):
 
 @app.post("/analyze-crash", response_model=CrashAnalysisOutput)
 def analyze_crash():
-    project_name = "crash_simulation"
-    ws.create_project(project_name, "cpp")
-    server_log.info("Running crash simulation for project '%s'", project_name)
+    server_log.info("Running crash simulation")
 
     try:
         start = time.time()
         result = simulate_crash()
         duration = time.time() - start
-
-        ws.save_file(project_name, "crash_analysis.json", json.dumps(result, indent=2))
-        ws.update_metadata(project_name, {
-            "status": "crash_simulated",
-            "compilation_time": f"{duration:.2f} sec",
-        })
-        ws.add_timeline_entry(project_name, {
-            "step": "Crash Simulation",
-            "status": "completed",
-            "duration": f"{duration:.2f} sec",
-        })
 
         crash_log.info("Crash simulation completed with %d frames in %.2fs", len(result["backtrace"]), duration)
         return result
@@ -345,9 +332,11 @@ def analyze_crash_report(request: CrashReportInput):
     if not request.backtrace:
         raise HTTPException(status_code=400, detail="Backtrace cannot be empty")
 
-    project_name = request.project_name or "crash_simulation"
-    ws.create_project(project_name, "cpp")
-    server_log.info("Analyzing crash report for project '%s' (%d frames)", project_name, len(request.backtrace))
+    project_name = request.project_name
+    if project_name:
+        server_log.info("Analyzing crash report for project '%s' (%d frames)", project_name, len(request.backtrace))
+    else:
+        server_log.info("Analyzing crash report (%d frames)", len(request.backtrace))
 
     start = time.time()
     result = analyze_backtrace(
@@ -359,40 +348,44 @@ def analyze_crash_report(request: CrashReportInput):
     )
     duration = time.time() - start
 
-    existing = json.loads(ws.load_file(project_name, "crash_analysis.json") or "{}")
-    existing["ai_analysis"] = result
-    ws.save_file(project_name, "crash_analysis.json", json.dumps(existing, indent=2))
-    ws.add_timeline_entry(project_name, {
-        "step": "AI Crash Analysis",
-        "status": "completed",
-        "duration": f"{duration:.2f} sec",
-    })
+    if project_name and ws.project_exists(project_name):
+        existing = json.loads(ws.load_file(project_name, "crash_analysis.json") or "{}")
+        existing["ai_analysis"] = result
+        ws.save_file(project_name, "crash_analysis.json", json.dumps(existing, indent=2))
+        ws.add_timeline_entry(project_name, {
+            "step": "AI Crash Analysis",
+            "status": "completed",
+            "duration": f"{duration:.2f} sec",
+        })
 
-    crash_log.info("AI crash analysis completed in %.2fs for project '%s'", duration, project_name)
+    crash_log.info("AI crash analysis completed in %.2fs", duration)
     return result
 
 
 @app.post("/analyze-user-crash", response_model=UserCrashAnalysisOutput)
 def analyze_user_crash(request: UserCrashAnalysisInput):
-    project_name = request.project_name or derive_project_name(f"user_crash_{request.language}")
-    ws.create_project(project_name, request.language)
-    server_log.info("Analyzing user code for project '%s'", project_name)
+    project_name = request.project_name
+    if project_name:
+        server_log.info("Analyzing user code for project '%s'", project_name)
+    else:
+        server_log.info("Analyzing user code")
 
     try:
         start = time.time()
         result = analyze_user_code(request.code, request.language)
         duration = time.time() - start
 
-        ws.save_file(project_name, "crash_analysis.json", json.dumps(result, indent=2))
-        ws.update_metadata(project_name, {
-            "status": "crashed" if result["crashed"] else "ok",
-            "compilation_time": f"{duration:.2f} sec",
-        })
-        ws.add_timeline_entry(project_name, {
-            "step": "User Code Crash Analysis",
-            "status": "completed",
-            "duration": f"{duration:.2f} sec",
-        })
+        if project_name and ws.project_exists(project_name):
+            ws.save_file(project_name, "crash_analysis.json", json.dumps(result, indent=2))
+            ws.update_metadata(project_name, {
+                "status": "crashed" if result["crashed"] else "ok",
+                "compilation_time": f"{duration:.2f} sec",
+            })
+            ws.add_timeline_entry(project_name, {
+                "step": "User Code Crash Analysis",
+                "status": "completed",
+                "duration": f"{duration:.2f} sec",
+            })
 
         crash_log.info(
             "User code analysis: crashed=%s, signal=%s, duration=%.2fs",
@@ -417,6 +410,13 @@ def list_projects():
     projects = ws.list_projects()
     server_log.info("Listed %d projects", len(projects))
     return success_response(data=projects, message=f"Found {len(projects)} projects")
+
+
+@app.delete("/projects")
+def delete_all_projects():
+    count = ws.delete_all_projects()
+    server_log.info("Deleted all %d projects", count)
+    return success_response(message=f"Deleted {count} projects")
 
 
 @app.get("/projects/{project_name}")

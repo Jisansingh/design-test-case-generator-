@@ -39,7 +39,6 @@ export default function Workspace() {
   const [restoringProject, setRestoringProject] = useState(false)
 
   const textareaRef = useRef(null)
-  const initialized = useRef(false)
   const copyTimeout = useRef(null)
 
   const addLog = useCallback((msg, type = 'info') => {
@@ -50,36 +49,41 @@ export default function Workspace() {
     return d.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, '_').slice(0, 60).replace(/^[._]+|[._]+$/g, '') || 'untitled'
   }, [])
 
-  useEffect(() => {
-    if (!initialized.current) {
-      initialized.current = true
-      const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved) setDesign(saved)
-    }
+  const resetWorkspace = useCallback(() => {
+    setProjectName('')
+    setDesign('')
+    setLanguage('')
+    setActiveTab('code')
+    setRunning(null)
+    setError(null)
+    setGeneratedCode(null)
+    setTestResults(null)
+    setExecutionResults(null)
+    setReportText(null)
+    setCrashResult(null)
+    setCrashReport(null)
+    setTimeline([])
+    setLogs([])
+    setActiveBottomTab('timeline')
+    setProjectStats(null)
+    setProjectFiles([])
+    setCopiedToast(null)
+    localStorage.removeItem(STORAGE_KEY)
   }, [])
 
-  useEffect(() => {
-    if (initialized.current) {
-      localStorage.setItem(STORAGE_KEY, design)
-    }
-  }, [design])
-
-  useEffect(() => {
-    const restoreName = location.state?.projectName
-    if (!restoreName || !initialized.current) return
-
+  const restoreProject = useCallback(async (restoreName) => {
     setRestoringProject(true)
     addLog(`Restoring workspace for project '${restoreName}'...`, 'info')
 
-    const extMap = LANG_TO_EXT
+    try {
+      const [pRes, fRes, tlRes, reqRes, rptRes] = await Promise.all([
+        api.getProject(restoreName),
+        api.getProjectFiles(restoreName),
+        api.getProjectTimeline(restoreName),
+        api.getProjectFile(restoreName, 'requirement.txt').catch(() => null),
+        api.getReport(restoreName).catch(() => null),
+      ])
 
-    Promise.all([
-      api.getProject(restoreName),
-      api.getProjectFiles(restoreName),
-      api.getProjectTimeline(restoreName),
-      api.getProjectFile(restoreName, 'requirement.txt').catch(() => null),
-      api.getReport(restoreName).catch(() => null),
-    ]).then(async ([pRes, fRes, tlRes, reqRes, rptRes]) => {
       const meta = pRes.success ? pRes.data : null
       if (!meta) {
         addLog(`Project '${restoreName}' not found`, 'error')
@@ -92,10 +96,9 @@ export default function Workspace() {
       if (tlRes.success) setTimeline(tlRes.data || [])
       if (fRes.success) setProjectFiles(fRes.data || [])
       if (pRes.success) setProjectStats(meta)
-
       if (rptRes?.success) setReportText(rptRes.data?.report || null)
 
-      const ext = extMap[meta.language] || 'txt'
+      const ext = LANG_TO_EXT[meta.language] || 'txt'
       const codeFile = `generated_code.${ext}`
       const [codeRes, testsRes, execRes, crashRes, gtestRes] = await Promise.all([
         api.getProjectFile(restoreName, codeFile).catch(() => null),
@@ -127,14 +130,26 @@ export default function Workspace() {
       }
 
       addLog(`Workspace restored for project '${restoreName}'`, 'success')
-    }).catch(e => {
+    } catch (e) {
       addLog(`Failed to restore workspace: ${e.message}`, 'error')
-    }).finally(() => {
+    } finally {
       setRestoringProject(false)
       window.history.replaceState({}, document.title)
-    })
+    }
+  }, [addLog])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, design)
+  }, [design])
+
+  useEffect(() => {
+    const restoreName = location.state?.projectName
+    resetWorkspace()
+    if (restoreName) {
+      restoreProject(restoreName)
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.state?.projectName])
+  }, [location.key])
 
   const handleGenerateCode = async () => {
     if (!design.trim()) return
@@ -364,7 +379,7 @@ export default function Workspace() {
             </select>
           </div>
 
-          <div className="relative flex-1 min-h-0">
+          <div className="relative h-[120px]">
             <textarea
               ref={textareaRef}
               value={design}
@@ -372,7 +387,7 @@ export default function Workspace() {
               placeholder={`Describe the software you want to test...
 
 Example: Build a banking API with deposit, withdraw, and balance check functionality`}
-              className="w-full h-full bg-surface-900 border border-surface-700 rounded-xl p-4 text-sm text-surface-200 placeholder-surface-600 resize-none focus:outline-none focus:border-accent-500/50 font-mono"
+              className="w-full h-full bg-surface-900 border border-surface-700 rounded-xl p-4 text-sm text-surface-200 placeholder-surface-600 resize-none focus:outline-none focus:border-accent-500/50 font-mono overflow-y-auto"
             />
           </div>
 
