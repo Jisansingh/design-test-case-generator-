@@ -133,3 +133,25 @@ class TimelineResponse(BaseModel):
     success: bool
     message: str
     data: Optional[List[TimelineEntry]] = None
+
+
+class RepositoryInfo(BaseModel):
+    repository_id: str
+    repository_name: str
+    status: str
+    upload_time: str
+    repository_path: str
+    repository_size: int
+    total_files: int
+
+
+class RepositoryUploadResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[RepositoryInfo] = None
+
+
+class RepositoryListResponse(BaseModel):
+    success: bool
+    message: str
+    data: Optional[List[RepositoryInfo]] = None

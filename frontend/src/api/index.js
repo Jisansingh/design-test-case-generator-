@@ -116,4 +116,28 @@ export async function deleteReport(name) {
   return data
 }
 
+export async function uploadRepository(file, onProgress) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const { data } = await api.post('/upload-repository', formData, {
+    onUploadProgress: onProgress,
+  })
+  return data
+}
+
+export async function getRepositories() {
+  const { data } = await api.get('/repositories')
+  return data
+}
+
+export async function getRepository(id) {
+  const { data } = await api.get(`/repositories/${encodeURIComponent(id)}`)
+  return data
+}
+
+export async function deleteRepository(id) {
+  const { data } = await api.delete(`/repositories/${encodeURIComponent(id)}`)
+  return data
+}
+
 export default api

@@ -5,11 +5,11 @@ import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from app.config import CORS_ORIGINS
+from app.config import CORS_ORIGINS, MAX_UPLOAD_SIZE
 from app.log_setup import setup_logging
 from app.workspace_manager import WorkspaceManager, derive_project_name, get_extension
 from app.responses import success_response, error_response
@@ -24,6 +24,7 @@ from app.schemas import (
     UserCrashAnalysisInput,
     UserCrashAnalysisOutput,
 )
+from app import repository_service
 from app.execution_service import execute_test_cases, generate_text_report
 from app.crash_service import simulate_crash, analyze_user_code, compile_and_run_program
 from app.crash_ai_service import analyze_backtrace
@@ -536,3 +537,60 @@ def delete_report(project_name: str):
     ws.update_metadata(project_name, {"status": "report_deleted", "last_report": ""})
     report_log.info("Deleted report for project '%s'", project_name)
     return success_response(message=f"Report deleted for project '{project_name}'")
+
+
+@app.post("/upload-repository")
+def upload_repository(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only ZIP files are accepted",
+        )
+
+    content = file.file.read()
+    file_size = len(content)
+
+    if file_size > MAX_UPLOAD_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum size is {MAX_UPLOAD_SIZE // (1024*1024)} MB",
+        )
+
+    try:
+        metadata = repository_service.upload_repository(content, file.filename)
+        server_log.info(
+            "Uploaded repository '%s' (id=%s)",
+            metadata["repository_name"], metadata["repository_id"],
+        )
+        return success_response(data=metadata, message="Repository uploaded successfully")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        server_log.error("Repository upload failed: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Repository upload failed. Please try again.",
+        )
+
+
+@app.get("/repositories")
+def list_repositories():
+    repos = repository_service.list_repositories()
+    server_log.info("Listed %d repositories", len(repos))
+    return success_response(data=repos, message=f"Found {len(repos)} repositories")
+
+
+@app.get("/repositories/{repository_id}")
+def get_repository(repository_id: str):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+    return success_response(data=metadata, message="Repository found")
+
+
+@app.delete("/repositories/{repository_id}")
+def delete_repository(repository_id: str):
+    if not repository_service.delete_repository(repository_id):
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+    server_log.info("Deleted repository '%s'", repository_id)
+    return success_response(message=f"Repository '{repository_id}' deleted")
