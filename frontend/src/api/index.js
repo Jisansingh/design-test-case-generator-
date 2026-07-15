@@ -2,7 +2,6 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/api',
-  headers: { 'Content-Type': 'application/json' },
 })
 
 export async function generateCode(design, language = null, projectName = null) {
@@ -137,6 +136,16 @@ export async function getRepository(id) {
 
 export async function deleteRepository(id) {
   const { data } = await api.delete(`/repositories/${encodeURIComponent(id)}`)
+  return data
+}
+
+export async function analyzeRepository(id) {
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/analyze`)
+  return data
+}
+
+export async function indexRepository(id) {
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/index`)
   return data
 }
 

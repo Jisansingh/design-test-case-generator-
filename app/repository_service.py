@@ -9,11 +9,32 @@ from typing import Optional
 from zipfile import ZipFile, BadZipFile
 
 from app.config import WORKSPACE_DIR, REPOSITORY_IGNORE_DIRS
+from app.indexing_service import index_repository as _index_repo
 
 logger = logging.getLogger("server")
 
 REPOSITORY_STATUS = "READY_FOR_ANALYSIS"
 REPO_PREFIX = "repo_"
+
+SUPPORTED_EXTENSIONS: dict[str, str] = {
+    ".c": "C",
+    ".cpp": "C++",
+    ".cc": "C++",
+    ".cxx": "C++",
+    ".py": "Python",
+    ".js": "JavaScript",
+    ".jsx": "React",
+    ".tsx": "React",
+    ".java": "Java",
+}
+
+CONTEXT_EXTENSIONS: dict[str, str] = {
+    ".html": "HTML",
+    ".css": "CSS",
+    ".json": "JSON",
+    ".yaml": "YAML",
+    ".yml": "YAML",
+}
 
 
 def _generate_repo_id() -> str:
@@ -127,6 +148,123 @@ def get_repository(repo_id: str) -> Optional[dict]:
     repo_dir = _repo_dir(repo_id)
     if not repo_dir.exists():
         return None
+    return _load_metadata(repo_id)
+
+
+def _update_metadata(repo_id: str, updates: dict) -> Optional[dict]:
+    metadata = _load_metadata(repo_id)
+    if metadata is None:
+        return None
+    metadata.update(updates)
+    _save_metadata(repo_id, metadata)
+    return metadata
+
+
+def _classify_file(rel_path: str) -> str:
+    if _should_ignore(rel_path):
+        return "ignored"
+    ext = Path(rel_path).suffix.lower()
+    if ext in SUPPORTED_EXTENSIONS:
+        return "supported"
+    if ext in CONTEXT_EXTENSIONS:
+        return "context"
+    return "unsupported"
+
+
+def _detect_languages(source_dir: Path) -> dict[str, int]:
+    languages: dict[str, int] = {}
+    for f in source_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = f.relative_to(source_dir)
+        if _should_ignore(str(rel)):
+            continue
+        ext = f.suffix.lower()
+        lang = SUPPORTED_EXTENSIONS.get(ext) or CONTEXT_EXTENSIONS.get(ext)
+        if lang:
+            languages[lang] = languages.get(lang, 0) + 1
+    return languages
+
+
+def analyze_repository(repo_id: str) -> Optional[dict]:
+    metadata = _load_metadata(repo_id)
+    if metadata is None:
+        return None
+
+    source_dir = _source_dir(repo_id)
+    if not source_dir.exists():
+        return None
+
+    _update_metadata(repo_id, {"status": "ANALYZING"})
+
+    supported = 0
+    context = 0
+    unsupported = 0
+    ignored = 0
+    total_size = 0
+    total_count = 0
+
+    for f in source_dir.rglob("*"):
+        if not f.is_file():
+            continue
+        rel = str(f.relative_to(source_dir))
+        total_count += 1
+        total_size += f.stat().st_size
+        category = _classify_file(rel)
+        if category == "supported":
+            supported += 1
+        elif category == "context":
+            context += 1
+        elif category == "ignored":
+            ignored += 1
+        else:
+            unsupported += 1
+
+    languages = _detect_languages(source_dir)
+    lang_list = sorted(languages.keys()) if languages else []
+
+    _update_metadata(repo_id, {
+        "status": "READY_FOR_INDEXING",
+        "total_files": total_count,
+        "supported_files": supported,
+        "context_files": context,
+        "unsupported_files": unsupported,
+        "ignored_files": ignored,
+        "repository_size": total_size,
+        "languages": lang_list,
+        "analysis_completed_at": datetime.now().isoformat(),
+    })
+
+    logger.info(
+        "Analyzed repository '%s': %d total, %d supported, %d context, %d unsupported, %d ignored, langs=%s",
+        repo_id, total_count, supported, context, unsupported, ignored, lang_list,
+    )
+
+    return _load_metadata(repo_id)
+
+
+def index_repository(repo_id: str) -> Optional[dict]:
+    metadata = _load_metadata(repo_id)
+    if metadata is None:
+        return None
+
+    source_path = _source_dir(repo_id)
+    if not source_path.exists():
+        return None
+
+    _update_metadata(repo_id, {"status": "INDEXING"})
+
+    result = _index_repo(str(source_path))
+
+    if result["success"]:
+        _update_metadata(repo_id, {
+            "status": "READY",
+            "index_created": True,
+            "indexed_at": datetime.now().isoformat(),
+        })
+    else:
+        _update_metadata(repo_id, {"status": "READY_FOR_INDEXING"})
+
     return _load_metadata(repo_id)
 
 

@@ -594,3 +594,27 @@ def delete_repository(repository_id: str):
         return error_response("not_found", f"Repository '{repository_id}' not found")
     server_log.info("Deleted repository '%s'", repository_id)
     return success_response(message=f"Repository '{repository_id}' deleted")
+
+
+@app.post("/repositories/{repository_id}/analyze")
+def analyze_repository(repository_id: str):
+    metadata = repository_service.analyze_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+    server_log.info(
+        "Analyzed repository '%s' (%s)",
+        repository_id, metadata.get("status"),
+    )
+    return success_response(data=metadata, message="Repository analyzed successfully")
+
+
+@app.post("/repositories/{repository_id}/index")
+def index_repository(repository_id: str):
+    metadata = repository_service.index_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+    server_log.info(
+        "Indexed repository '%s' (%s)",
+        repository_id, metadata.get("status"),
+    )
+    return success_response(data=metadata, message="Repository indexed successfully")

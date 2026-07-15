@@ -91,8 +91,8 @@ export default function Projects() {
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map(p => (
-            <Card key={p.project_name} hover onClick={() => navigate(`/projects/${encodeURIComponent(p.project_name)}`)}>
+          {filtered.map((p, i) => (
+            <Card key={p.project_name || i} hover onClick={() => navigate(`/projects/${encodeURIComponent(p.project_name)}`)}>
               <div className="flex items-start justify-between mb-3">
                 <div className="min-w-0 flex-1">
                   <h3 className="text-sm font-semibold text-surface-200 truncate">{p.project_name}</h3>

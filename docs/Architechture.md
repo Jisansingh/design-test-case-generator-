@@ -1,9 +1,8 @@
 # AI Test Generator
 ## System Architecture
 
-Version: 1.0
-Status: Phase 1 Completed
-
+Version: 1.1
+Status: Phase 2 Completed
 ---
 
 # 1. Overview
@@ -68,11 +67,15 @@ Repository Analysis
 
 ↓
 
-Language Detection
+Repository Metadata Generation
 
 ↓
 
-Repository Indexing
+Repository Ready for Indexing
+
+↓
+
+Codebase Memory MCP Indexing
 
 ↓
 
@@ -124,6 +127,14 @@ Workspace Manager
 
 ↓
 
+Repository Service
+
+↓
+
+Workspace Manager
+
+↓
+
 Repository Analyzer
 
 ↓
@@ -132,7 +143,15 @@ Language Detector
 
 ↓
 
+Repository Metadata Manager
+
+↓
+
 Codebase Memory MCP Service
+
+↓
+
+Context Retrieval Service
 
 ↓
 
@@ -170,7 +189,15 @@ EXTRACTING
 
 ↓
 
+READY_FOR_ANALYSIS
+
+↓
+
 ANALYZING
+
+↓
+
+READY_FOR_INDEXING
 
 ↓
 
@@ -182,11 +209,11 @@ READY
 
 ↓
 
-GENERATING TESTS
+GENERATING_TESTS
 
 ↓
 
-EXECUTING TESTS
+EXECUTING_TESTS
 
 ↓
 
@@ -202,15 +229,31 @@ repo_<id>/
 
     source/
 
-    generated_tests/
-
-    reports/
-
-    index/
-
     metadata.json
 
+    generated_tests/      (Created in later phases)
+
+    reports/              (Created after execution)
+
+    index/                (Created after MCP indexing)
+
 ---
+
+# Repository Analysis
+
+Phase 3 analyzes uploaded repositories before semantic indexing.
+
+The analysis process includes:
+
+- Repository scanning
+- Language detection
+- File classification
+- Repository statistics generation
+- Metadata enrichment
+
+No AI models or Codebase Memory MCP are used during this phase.
+
+Repository analysis prepares the repository for semantic indexing in the next phase.
 
 # 8. Codebase Memory MCP
 
@@ -278,10 +321,15 @@ Implemented
 - Google Test execution
 - Crash analysis
 - Report generation
+- Repository upload
+- Repository validation
+- Repository workspace management
+- Repository metadata generation
+- Repository management APIs
 
 Planned
 
-- Repository upload
+- Repository analysis
 - Repository indexing
 - Repository explorer
 - Context retrieval
@@ -289,7 +337,31 @@ Planned
 - Analytics dashboard
 
 ---
+# Development Roadmap
 
+Phase 1
+- Architecture & Planning
+
+Phase 2
+- Repository Upload & Workspace Management
+
+Phase 3
+- Repository Analysis & Metadata
+
+Phase 4
+- Codebase Memory MCP Indexing
+
+Phase 5
+- Repository Explorer & Context Retrieval
+
+Phase 6
+- AI Test Generation
+
+Phase 7
+- Multi-language Test Execution
+
+Phase 8
+- Reports, Analytics & Token Dashboard
 # 11. Future Scope
 
 - GitHub repository import

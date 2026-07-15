@@ -5,8 +5,44 @@ import { Button } from '../components/common/Button'
 import { Spinner, PageSpinner } from '../components/common/Spinner'
 import { EmptyState } from '../components/common/EmptyState'
 import { Modal } from '../components/common/Modal'
-import { formatDate } from '../utils/formatters'
+import { formatDate, statusLabel } from '../utils/formatters'
 import * as api from '../api'
+
+function AnalysisSummary({ r }) {
+  if (!r.languages && !r.supported_files && !r.context_files) return null
+  const items = [
+    { label: 'Supported', value: r.supported_files },
+    { label: 'Context', value: r.context_files },
+    { label: 'Unsupported', value: r.unsupported_files },
+    { label: 'Ignored', value: r.ignored_files },
+  ]
+  return (
+    <div className="mt-3 pt-3 border-t border-surface-800">
+      {r.languages?.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mb-2">
+          {r.languages.map(lang => (
+            <Badge key={lang} variant="info">{lang}</Badge>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+        {items.map(i => (
+          <span key={i.label} className="text-surface-500">
+            {i.label}: <span className="text-surface-300 font-medium">{i.value ?? '—'}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const STATUS_BADGE_VARIANT = {
+  READY_FOR_ANALYSIS: 'warning',
+  ANALYZING: 'info',
+  READY_FOR_INDEXING: 'success',
+  INDEXING: 'info',
+  READY: 'success',
+}
 
 export default function Repositories() {
   const [repos, setRepos] = useState([])
@@ -18,6 +54,8 @@ export default function Repositories() {
   const [dragOver, setDragOver] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [deleting, setDeleting] = useState(false)
+  const [analyzingId, setAnalyzingId] = useState(null)
+  const [indexingId, setIndexingId] = useState(null)
   const fileInputRef = useRef(null)
 
   const fetchRepos = useCallback(async () => {
@@ -59,7 +97,8 @@ export default function Repositories() {
         setError(res.error?.message || 'Upload failed')
       }
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const detail = e.response?.data?.detail
+      setError(Array.isArray(detail) ? detail[0]?.msg : (detail || e.message))
     } finally {
       setUploading(false)
       setUploadProgress(0)
@@ -81,6 +120,46 @@ export default function Repositories() {
 
   const handleDragLeave = () => setDragOver(false)
 
+  const handleAnalyze = async (repoId) => {
+    setAnalyzingId(repoId)
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await api.analyzeRepository(repoId)
+      if (res.success) {
+        setSuccessMsg('Repository analysis complete')
+        await fetchRepos()
+      } else {
+        setError(res.error?.message || 'Analysis failed')
+      }
+    } catch (e) {
+      const detail = e.response?.data?.detail
+      setError(Array.isArray(detail) ? detail[0]?.msg : (detail || e.message))
+    } finally {
+      setAnalyzingId(null)
+    }
+  }
+
+  const handleIndex = async (repoId) => {
+    setIndexingId(repoId)
+    setError(null)
+    setSuccessMsg(null)
+    try {
+      const res = await api.indexRepository(repoId)
+      if (res.success) {
+        setSuccessMsg('Repository indexed successfully')
+        await fetchRepos()
+      } else {
+        setError(res.error?.message || 'Indexing failed')
+      }
+    } catch (e) {
+      const detail = e.response?.data?.detail
+      setError(Array.isArray(detail) ? detail[0]?.msg : (detail || e.message))
+    } finally {
+      setIndexingId(null)
+    }
+  }
+
   const handleDelete = async () => {
     if (!deleteTarget) return
     setDeleting(true)
@@ -93,7 +172,8 @@ export default function Repositories() {
         setError(res.error?.message || 'Delete failed')
       }
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const detail = e.response?.data?.detail
+      setError(Array.isArray(detail) ? detail[0]?.msg : (detail || e.message))
     } finally {
       setDeleting(false)
       setDeleteTarget(null)
@@ -208,18 +288,42 @@ export default function Repositories() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-3 mb-1">
                     <h3 className="text-sm font-semibold text-surface-200">{r.repository_name}</h3>
-                    <Badge variant="info">READY_FOR_ANALYSIS</Badge>
+                    <Badge variant={STATUS_BADGE_VARIANT[r.status] || 'default'}>{statusLabel(r.status)}</Badge>
                   </div>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-surface-500">
                     <span>ID: <span className="text-surface-400 font-mono">{r.repository_id.slice(0, 8)}...</span></span>
                     <span>Size: <span className="text-surface-400">{formatSize(r.repository_size)}</span></span>
                     <span>Files: <span className="text-surface-400">{r.total_files}</span></span>
                     <span>Uploaded: <span className="text-surface-400">{formatDate(r.upload_time)}</span></span>
+                    {r.indexed_at && <span>Indexed: <span className="text-surface-400">{formatDate(r.indexed_at)}</span></span>}
                   </div>
+                  <AnalysisSummary r={r} />
                 </div>
-                <Button variant="danger" size="xs" onClick={() => setDeleteTarget(r.repository_id)}>
-                  Delete
-                </Button>
+                <div className="flex gap-2 ml-4">
+                  {(r.status === 'READY_FOR_ANALYSIS' || !r.languages) && (
+                    <Button
+                      variant="primary"
+                      size="xs"
+                      loading={analyzingId === r.repository_id}
+                      onClick={() => handleAnalyze(r.repository_id)}
+                    >
+                      Analyze
+                    </Button>
+                  )}
+                  {r.status === 'READY_FOR_INDEXING' && (
+                    <Button
+                      variant="primary"
+                      size="xs"
+                      loading={indexingId === r.repository_id}
+                      onClick={() => handleIndex(r.repository_id)}
+                    >
+                      Index
+                    </Button>
+                  )}
+                  <Button variant="danger" size="xs" onClick={() => setDeleteTarget(r.repository_id)}>
+                    Delete
+                  </Button>
+                </div>
               </div>
             </Card>
           ))}

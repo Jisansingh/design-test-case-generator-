@@ -64,8 +64,8 @@ export default function Dashboard() {
             <p className="text-sm text-surface-600 py-4 text-center">No projects yet</p>
           ) : (
             <div className="space-y-2">
-              {recentProjects.map(p => (
-                <div key={p.project_name} onClick={() => navigate(`/projects/${encodeURIComponent(p.project_name)}`)} className="flex items-center justify-between p-2.5 rounded-lg bg-surface-900/50 hover:bg-surface-800 cursor-pointer transition-colors">
+              {recentProjects.map((p, i) => (
+                <div key={p.project_name || p.created_at || i} onClick={() => navigate(`/projects/${encodeURIComponent(p.project_name)}`)} className="flex items-center justify-between p-2.5 rounded-lg bg-surface-900/50 hover:bg-surface-800 cursor-pointer transition-colors">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-surface-200 truncate">{p.project_name}</p>
                     <p className="text-xs text-surface-500 mt-0.5">{formatDate(p.created_at)}</p>
@@ -85,8 +85,8 @@ export default function Dashboard() {
             <p className="text-sm text-surface-600 py-4 text-center">No reports yet</p>
           ) : (
             <div className="space-y-2">
-              {recentReports.map(r => (
-                <div key={r.project_name} className="flex items-center justify-between p-2.5 rounded-lg bg-surface-900/50">
+              {recentReports.map((r, i) => (
+                <div key={r.project_name || i} className="flex items-center justify-between p-2.5 rounded-lg bg-surface-900/50">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-surface-200 truncate">{r.project_name}</p>
                     <p className="text-xs text-surface-500 mt-0.5">{formatDate(r.generated_at)}</p>

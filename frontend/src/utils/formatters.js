@@ -30,6 +30,12 @@ export function statusColor(status) {
     crashed: 'text-red-400',
     ok: 'text-accent-400',
     completed: 'text-accent-400',
+    READY_FOR_ANALYSIS: 'text-yellow-400',
+    ANALYZING: 'text-blue-400',
+    READY_FOR_INDEXING: 'text-accent-400',
+    INDEXING: 'text-blue-400',
+    INDEXED: 'text-accent-400',
+    READY: 'text-accent-400',
   }
   return map[status] || 'text-surface-400'
 }
@@ -45,6 +51,12 @@ export function statusLabel(status) {
     crashed: 'Crashed',
     ok: 'OK',
     completed: 'Completed',
+    READY_FOR_ANALYSIS: 'Ready for Analysis',
+    ANALYZING: 'Analyzing',
+    READY_FOR_INDEXING: 'Ready for Indexing',
+    INDEXING: 'Indexing',
+    INDEXED: 'Indexed',
+    READY: 'Ready',
   }
   return map[status] || status || 'Unknown'
 }

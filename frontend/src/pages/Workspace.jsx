@@ -178,7 +178,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Code generation failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
@@ -204,7 +204,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Test generation failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
@@ -228,7 +228,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Execution failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
@@ -252,7 +252,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Report generation failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
@@ -314,7 +314,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Crash analysis failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
@@ -341,7 +341,7 @@ export default function Workspace() {
       const tl = await api.getProjectTimeline(pn)
       if (tl.success) setTimeline(tl.data)
     } catch (e) {
-      setError(e.response?.data?.detail || e.message)
+      const _d = e.response?.data?.detail; setError(Array.isArray(_d) ? _d[0]?.msg : (_d || e.message))
       addLog(`Program run failed: ${e.message}`, 'error')
     } finally {
       setRunning(null)
