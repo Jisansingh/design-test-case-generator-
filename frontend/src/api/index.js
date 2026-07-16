@@ -168,4 +168,11 @@ export async function getFileContext(id, path) {
   return data
 }
 
+export async function generateRepositoryTests(id, selectedFile) {
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/generate-tests`, {
+    selected_file: selectedFile,
+  })
+  return data
+}
+
 export default api

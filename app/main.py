@@ -23,11 +23,18 @@ from app.schemas import (
     CrashReportOutput,
     UserCrashAnalysisInput,
     UserCrashAnalysisOutput,
+    GenerateTestsRequest,
 )
 from app import repository_service
 from app.execution_service import execute_test_cases, generate_text_report
 from app.crash_service import simulate_crash, analyze_user_code, compile_and_run_program
 from app.crash_ai_service import analyze_backtrace
+
+GENERATION_EXTENSIONS = {
+    ".c", ".cpp", ".h", ".hpp", ".py", ".java",
+    ".js", ".jsx", ".ts", ".tsx", ".html", ".css",
+    ".cs", ".go", ".rs",
+}
 
 loggers = setup_logging()
 server_log = loggers["server"]
@@ -652,3 +659,48 @@ def index_repository(repository_id: str):
         repository_id, metadata.get("status"),
     )
     return success_response(data=metadata, message="Repository indexed successfully")
+
+
+@app.post("/repositories/{repository_id}/generate-tests")
+def generate_repository_tests(repository_id: str, request: GenerateTestsRequest):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+
+    source_content = repository_service.get_source_file_content(repository_id, request.selected_file)
+    if source_content is None:
+        return error_response("not_found", f"File '{request.selected_file}' not found")
+
+    ext = Path(request.selected_file).suffix.lower()
+    if ext not in GENERATION_EXTENSIONS:
+        return error_response("unsupported_file", "Test generation is only available for supported source code files.")
+
+    context = repository_service.retrieve_file_context(repository_id, request.selected_file)
+
+    prompt_parts = [
+        f"Generate test cases for the following source code file:\n\nFile: {request.selected_file}",
+        f"Source Code:\n```\n{source_content}\n```",
+    ]
+    if context.get("found"):
+        symbols = context.get("symbols", [])
+        if symbols:
+            symbol_lines = "\n".join(f"  - {s['type']}: {s['name']} ({s['lines']})" for s in symbols)
+            prompt_parts.append(f"Code graph symbols:\n{symbol_lines}")
+        arch = context.get("project_architecture")
+        if arch:
+            prompt_parts.append(f"Project architecture: {arch.get('total_nodes', 0)} nodes, {arch.get('languages', [])}")
+
+    prompt = "\n\n".join(prompt_parts)
+    server_log.info("Generating tests for '%s' in repository '%s'", request.selected_file, repository_id)
+
+    start = time.time()
+    test_cases = generate_test_cases(prompt)
+    duration = time.time() - start
+
+    total = len(test_cases.get("functional", [])) + len(test_cases.get("edge_cases", [])) + len(test_cases.get("security", []))
+    server_log.info("Generated %d test cases for '%s' in %.2fs", total, request.selected_file, duration)
+
+    return success_response(data={
+        "selected_file": request.selected_file,
+        "test_cases": test_cases,
+    }, message=f"Generated {total} test cases")

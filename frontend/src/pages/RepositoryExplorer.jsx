@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { Badge } from '../components/common/Badge'
+import { Button } from '../components/common/Button'
 import { Spinner, PageSpinner } from '../components/common/Spinner'
 import { FileTree } from '../components/repository/FileTree'
 import { formatDate, statusLabel } from '../utils/formatters'
@@ -14,9 +15,21 @@ const EXT_TO_MONACO = {
   xml: 'xml', sh: 'shell', txt: 'plaintext',
 }
 
+const SOURCE_EXTENSIONS = new Set([
+  '.c', '.cpp', '.h', '.hpp', '.py', '.java',
+  '.js', '.jsx', '.ts', '.tsx', '.html', '.css',
+  '.cs', '.go', '.rs',
+])
+
 function guessLanguage(filePath) {
   const ext = filePath.split('.').pop().toLowerCase()
   return EXT_TO_MONACO[ext] || 'plaintext'
+}
+
+function isSourceFile(filePath) {
+  const dot = filePath.lastIndexOf('.')
+  if (dot === -1) return false
+  return SOURCE_EXTENSIONS.has(filePath.slice(dot).toLowerCase())
 }
 
 const TYPE_BADGE_VARIANT = {
@@ -124,6 +137,78 @@ function ContextPanel({ context, loading, filePath }) {
   )
 }
 
+const TEST_CATEGORY_META = {
+  functional: { label: 'Functional', variant: 'success' },
+  edge_cases: { label: 'Edge Cases', variant: 'warning' },
+  security: { label: 'Security', variant: 'danger' },
+}
+
+function TestResultsPanel({ testCases, generating, onGenerate }) {
+  if (generating) {
+    return (
+      <div className="flex items-center justify-center py-8 border-t border-surface-800">
+        <Spinner size="sm" />
+        <span className="text-xs text-surface-500 ml-3">Generating test cases...</span>
+      </div>
+    )
+  }
+
+  if (!testCases) {
+    return null
+  }
+
+  const hasTests = Object.values(testCases).some(cases => cases.length > 0)
+
+  if (!hasTests) {
+    return (
+      <div className="border-t border-surface-800 px-4 py-4">
+        <p className="text-xs text-surface-500">AI returned no test cases. Try again with a different file.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-surface-950 border-t border-surface-800">
+      <div className="px-4 py-2 bg-surface-900 border-b border-surface-800 flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-emerald-400">
+          <path d="M9 11l3 3L22 4" />
+          <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" />
+        </svg>
+        <span className="text-xs font-semibold text-surface-300 uppercase tracking-wider">Generated Tests</span>
+        {testCases.functional && (
+          <span className="text-[10px] text-surface-500 ml-auto">
+            {testCases.functional.length + testCases.edge_cases.length + testCases.security.length} cases
+          </span>
+        )}
+      </div>
+      <div className="p-3 space-y-3 text-xs">
+        {Object.entries(TEST_CATEGORY_META).map(([key, meta]) => {
+          const cases = testCases[key] || []
+          if (cases.length === 0) return null
+          return (
+            <div key={key} className="space-y-1">
+              <h4 className="text-[10px] font-semibold text-surface-500 uppercase tracking-wider">
+                <Badge variant={meta.variant}>{meta.label}</Badge>
+                <span className="ml-2 text-surface-600 font-normal normal-case">{cases.length} tests</span>
+              </h4>
+              <div className="space-y-1">
+                {cases.map((tc, i) => (
+                  <div key={i} className="flex items-start gap-2 bg-surface-900/30 rounded px-2 py-1.5">
+                    <span className="text-surface-600 font-mono text-[10px] mt-0.5 flex-shrink-0">
+                      {String(i + 1).padStart(2, '0')}
+                    </span>
+                    <span className="text-surface-200 leading-relaxed">{tc}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function RepositoryExplorer() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -137,6 +222,8 @@ export default function RepositoryExplorer() {
   const [context, setContext] = useState(null)
   const [contextLoading, setContextLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [testCases, setTestCases] = useState(null)
+  const [testGenerating, setTestGenerating] = useState(false)
   const fetchIdRef = useRef(0)
 
   useEffect(() => {
@@ -167,6 +254,7 @@ export default function RepositoryExplorer() {
     setFileLoading(true)
     setContext(null)
     setContextLoading(true)
+    setTestCases(null)
     setError(null)
 
     try {
@@ -194,6 +282,22 @@ export default function RepositoryExplorer() {
       }
     }
   }, [id])
+
+  const handleGenerateTests = useCallback(async () => {
+    if (!selectedFile) return
+    setTestGenerating(true)
+    setTestCases(null)
+    setError(null)
+    try {
+      const res = await api.generateRepositoryTests(id, selectedFile)
+      if (res.success) setTestCases(res.data.test_cases)
+      else setError(res.error?.message || 'Test generation failed')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setTestGenerating(false)
+    }
+  }, [id, selectedFile])
 
   if (!repo && treeLoading) return <PageSpinner />
 
@@ -262,6 +366,21 @@ export default function RepositoryExplorer() {
                   </svg>
                   <span className="text-xs text-surface-300 font-mono truncate">{selectedFile}</span>
                 </div>
+                {isSourceFile(selectedFile) ? (
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={handleGenerateTests}
+                    loading={testGenerating}
+                    disabled={testGenerating}
+                  >
+                    Generate Tests
+                  </Button>
+                ) : (
+                  <span className="text-[10px] text-surface-500 italic">
+                    Test generation not available for this file type
+                  </span>
+                )}
               </div>
               <div className="flex-1 min-h-[200px] relative">
                 {fileLoading ? (
@@ -298,6 +417,11 @@ export default function RepositoryExplorer() {
                 context={context}
                 loading={contextLoading}
                 filePath={selectedFile}
+              />
+              <TestResultsPanel
+                testCases={testCases}
+                generating={testGenerating}
+                onGenerate={handleGenerateTests}
               />
             </div>
           ) : (

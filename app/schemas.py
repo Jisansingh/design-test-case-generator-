@@ -135,6 +135,10 @@ class TimelineResponse(BaseModel):
     data: Optional[List[TimelineEntry]] = None
 
 
+class GenerateTestsRequest(BaseModel):
+    selected_file: str
+
+
 class RepositoryInfo(BaseModel):
     repository_id: str
     repository_name: str
