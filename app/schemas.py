@@ -139,6 +139,15 @@ class GenerateTestsRequest(BaseModel):
     selected_file: str
 
 
+class RepositoryExecutionRequest(BaseModel):
+    selected_file: str
+    test_cases: TestCases
+
+
+class RepositoryReportRequest(BaseModel):
+    selected_file: str
+
+
 class RepositoryInfo(BaseModel):
     repository_id: str
     repository_name: str

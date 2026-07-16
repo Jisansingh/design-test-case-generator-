@@ -140,7 +140,7 @@ def list_repositories() -> list[dict]:
         if child.is_dir() and child.name.startswith(REPO_PREFIX):
             repo_id = child.name[len(REPO_PREFIX):]
             metadata = _load_metadata(repo_id)
-            if metadata:
+            if metadata and "repository_id" in metadata:
                 repos.append(metadata)
     return repos
 

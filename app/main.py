@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import tempfile
 import time
 from datetime import datetime
@@ -24,6 +25,8 @@ from app.schemas import (
     UserCrashAnalysisInput,
     UserCrashAnalysisOutput,
     GenerateTestsRequest,
+    RepositoryExecutionRequest,
+    RepositoryReportRequest,
 )
 from app import repository_service
 from app.execution_service import execute_test_cases, generate_text_report
@@ -102,6 +105,11 @@ def _update_stats_from_execution(project_name: str, exec_result: dict, duration:
         "success_rate": rate,
         "execution_time": f"{duration:.2f} sec",
     })
+
+
+def _make_repo_project_name(repo_id: str, file_path: str) -> str:
+    safe = re.sub(r'[^a-zA-Z0-9_]', '_', file_path)
+    return f"rexec_{repo_id[:8]}_{safe}"
 
 
 @app.get("/")
@@ -704,3 +712,104 @@ def generate_repository_tests(repository_id: str, request: GenerateTestsRequest)
         "selected_file": request.selected_file,
         "test_cases": test_cases,
     }, message=f"Generated {total} test cases")
+
+
+@app.post("/repositories/{repository_id}/execute-tests")
+def execute_repository_tests(repository_id: str, request: RepositoryExecutionRequest):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+
+    project_name = _make_repo_project_name(repository_id, request.selected_file)
+    ws.create_project(project_name, "repository")
+
+    tc = request.test_cases
+    ws.save_file(project_name, "generated_tests.json", json.dumps({
+        "functional": tc.functional,
+        "edge_cases": tc.edge_cases,
+        "security": tc.security,
+    }, indent=2))
+
+    server_log.info("Executing tests for '%s' in repository '%s'", request.selected_file, repository_id)
+
+    start = time.time()
+    execution_result = execute_test_cases(tc.functional, tc.edge_cases, tc.security)
+    duration = time.time() - start
+
+    ws.save_file(project_name, "execution_result.json", json.dumps(execution_result, indent=2))
+    _update_stats_from_execution(project_name, execution_result, duration)
+    ws.add_timeline_entry(project_name, {
+        "step": "Execute Tests",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    server_log.info(
+        "Executed %d tests for '%s': %d passed, %d failed in %.2fs",
+        execution_result["summary"]["total"],
+        request.selected_file,
+        execution_result["summary"]["passed"],
+        execution_result["summary"]["failed"],
+        duration,
+    )
+    return success_response(data={
+        "selected_file": request.selected_file,
+        "execution_result": execution_result,
+    }, message=f"Executed {execution_result['summary']['total']} tests")
+
+
+@app.post("/repositories/{repository_id}/generate-report")
+def generate_repository_report(repository_id: str, request: RepositoryReportRequest):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+
+    project_name = _make_repo_project_name(repository_id, request.selected_file)
+
+    existing_exec = ws.load_file(project_name, "execution_result.json")
+    if existing_exec is None:
+        return error_response("not_found", "No execution results found. Execute tests first.")
+
+    execution_result = json.loads(existing_exec)
+    server_log.info("Generating report for '%s' in repository '%s'", request.selected_file, repository_id)
+
+    start = time.time()
+    report_text = generate_text_report(execution_result)
+    duration = time.time() - start
+
+    ws.save_file(project_name, "report.txt", report_text)
+    ws.update_metadata(project_name, {
+        "status": "report_generated",
+        "last_report": datetime.now().isoformat(),
+        "report_generation_time": f"{duration:.2f} sec",
+    })
+    ws.add_timeline_entry(project_name, {
+        "step": "Generate Report",
+        "status": "completed",
+        "duration": f"{duration:.2f} sec",
+    })
+
+    server_log.info("Generated report for '%s' in %.2fs", request.selected_file, duration)
+    return success_response(data={
+        "selected_file": request.selected_file,
+        "report": report_text,
+    }, message="Report generated")
+
+
+@app.get("/repositories/{repository_id}/download-report")
+def download_repository_report(repository_id: str, selected_file: str):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+
+    project_name = _make_repo_project_name(repository_id, selected_file)
+    report_path = ws.get_project_dir(project_name) / "report.txt"
+    if not report_path.exists():
+        return error_response("not_found", "No report found. Generate a report first.")
+
+    server_log.info("Downloading report for '%s' in repository '%s'", selected_file, repository_id)
+    return FileResponse(
+        path=str(report_path),
+        media_type="text/plain",
+        filename=f"report_{Path(selected_file).name}.txt",
+    )

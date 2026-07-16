@@ -209,6 +209,122 @@ function TestResultsPanel({ testCases, generating, onGenerate }) {
   )
 }
 
+function ExecutionPanel({ result, generating, onExecute }) {
+  if (generating) {
+    return (
+      <div className="flex items-center justify-center py-6 border-t border-surface-800">
+        <Spinner size="sm" />
+        <span className="text-xs text-surface-500 ml-3">Executing tests...</span>
+      </div>
+    )
+  }
+
+  if (!result) return null
+
+  const summary = result.summary || { total: 0, passed: 0, failed: 0 }
+  const failedTests = []
+  const passedTests = []
+  for (const key of ['functional', 'edge_cases', 'security']) {
+    for (const t of result[key] || []) {
+      const entry = { ...t, category: key }
+      if (t.status === 'FAIL') failedTests.push(entry)
+      else passedTests.push(entry)
+    }
+  }
+
+  return (
+    <div className="bg-surface-950 border-t border-surface-800">
+      <div className="px-4 py-2 bg-surface-900 border-b border-surface-800 flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-blue-400">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+        </svg>
+        <span className="text-xs font-semibold text-surface-300 uppercase tracking-wider">Execution Results</span>
+      </div>
+      <div className="p-3 space-y-3 text-xs">
+        <div className="flex items-center gap-4 bg-surface-900/50 rounded-lg p-3">
+          <div className="text-center">
+            <div className="text-lg font-bold text-surface-100">{summary.total}</div>
+            <div className="text-[10px] text-surface-500 uppercase">Total</div>
+          </div>
+          <div className="text-center">
+            <div className="text-lg font-bold text-emerald-400">{summary.passed}</div>
+            <div className="text-[10px] text-surface-500 uppercase">Passed</div>
+          </div>
+          <div className="text-center">
+            <div className="text-lg font-bold text-red-400">{summary.failed}</div>
+            <div className="text-[10px] text-surface-500 uppercase">Failed</div>
+          </div>
+        </div>
+
+        {failedTests.length > 0 && (
+          <div className="space-y-1">
+            <h4 className="text-[10px] font-semibold text-red-400 uppercase tracking-wider">Failed</h4>
+            {failedTests.map((t, i) => (
+              <div key={i} className="flex items-start gap-2 bg-red-900/10 rounded px-2 py-1.5">
+                <Badge variant="danger">FAIL</Badge>
+                <div className="min-w-0">
+                  <span className="text-surface-200 leading-relaxed block">{t.test_case}</span>
+                  <span className="text-red-400/70 text-[10px]">{t.remarks}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {passedTests.length > 0 && (
+          <div className="space-y-1">
+            <h4 className="text-[10px] font-semibold text-emerald-400 uppercase tracking-wider">Passed</h4>
+            {passedTests.map((t, i) => (
+              <div key={i} className="flex items-start gap-2 bg-emerald-900/5 rounded px-2 py-1.5">
+                <Badge variant="success">PASS</Badge>
+                <div className="min-w-0">
+                  <span className="text-surface-200 leading-relaxed block">{t.test_case}</span>
+                  <span className="text-surface-500 text-[10px]">{t.remarks}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReportPanel({ reportText, generating, onGenerate, onDownload }) {
+  if (generating) {
+    return (
+      <div className="flex items-center justify-center py-6 border-t border-surface-800">
+        <Spinner size="sm" />
+        <span className="text-xs text-surface-500 ml-3">Generating report...</span>
+      </div>
+    )
+  }
+
+  if (!reportText) return null
+
+  return (
+    <div className="bg-surface-950 border-t border-surface-800">
+      <div className="px-4 py-2 bg-surface-900 border-b border-surface-800 flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="text-purple-400">
+          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+        </svg>
+        <span className="text-xs font-semibold text-surface-300 uppercase tracking-wider">Report</span>
+        <div className="ml-auto">
+          <Button variant="secondary" size="xs" onClick={onDownload}>
+            Download Report
+          </Button>
+        </div>
+      </div>
+      <div className="p-3">
+        <pre className="text-xs text-surface-300 font-mono whitespace-pre-wrap leading-relaxed bg-surface-900/30 rounded-lg p-3 max-h-80 overflow-y-auto">{reportText}</pre>
+      </div>
+    </div>
+  )
+}
+
 export default function RepositoryExplorer() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -224,6 +340,10 @@ export default function RepositoryExplorer() {
   const [error, setError] = useState(null)
   const [testCases, setTestCases] = useState(null)
   const [testGenerating, setTestGenerating] = useState(false)
+  const [executionResult, setExecutionResult] = useState(null)
+  const [executing, setExecuting] = useState(false)
+  const [reportText, setReportText] = useState(null)
+  const [reportGenerating, setReportGenerating] = useState(false)
   const fetchIdRef = useRef(0)
 
   useEffect(() => {
@@ -255,6 +375,8 @@ export default function RepositoryExplorer() {
     setContext(null)
     setContextLoading(true)
     setTestCases(null)
+    setExecutionResult(null)
+    setReportText(null)
     setError(null)
 
     try {
@@ -297,6 +419,45 @@ export default function RepositoryExplorer() {
     } finally {
       setTestGenerating(false)
     }
+  }, [id, selectedFile])
+
+  const handleExecuteTests = useCallback(async () => {
+    if (!selectedFile || !testCases) return
+    setExecuting(true)
+    setExecutionResult(null)
+    setReportText(null)
+    setError(null)
+    try {
+      const res = await api.executeRepositoryTests(id, selectedFile, testCases)
+      if (res.success) setExecutionResult(res.data.execution_result)
+      else setError(res.error?.message || 'Test execution failed')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setExecuting(false)
+    }
+  }, [id, selectedFile, testCases])
+
+  const handleGenerateReport = useCallback(async () => {
+    if (!selectedFile) return
+    setReportGenerating(true)
+    setReportText(null)
+    setError(null)
+    try {
+      const res = await api.generateRepositoryReport(id, selectedFile)
+      if (res.success) setReportText(res.data.report)
+      else setError(res.error?.message || 'Report generation failed')
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setReportGenerating(false)
+    }
+  }, [id, selectedFile])
+
+  const handleDownloadReport = useCallback(() => {
+    if (!selectedFile) return
+    const url = `/api/repositories/${encodeURIComponent(id)}/download-report?selected_file=${encodeURIComponent(selectedFile)}`
+    window.open(url, '_blank')
   }, [id, selectedFile])
 
   if (!repo && treeLoading) return <PageSpinner />
@@ -422,6 +583,27 @@ export default function RepositoryExplorer() {
                 testCases={testCases}
                 generating={testGenerating}
                 onGenerate={handleGenerateTests}
+              />
+              {testCases && !executing && !executionResult && (
+                <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                  <Button onClick={handleExecuteTests}>Execute Tests</Button>
+                </div>
+              )}
+              <ExecutionPanel
+                result={executionResult}
+                generating={executing}
+                onExecute={handleExecuteTests}
+              />
+              {executionResult && !reportGenerating && !reportText && (
+                <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                  <Button onClick={handleGenerateReport}>Generate Report</Button>
+                </div>
+              )}
+              <ReportPanel
+                reportText={reportText}
+                generating={reportGenerating}
+                onGenerate={handleGenerateReport}
+                onDownload={handleDownloadReport}
               />
             </div>
           ) : (

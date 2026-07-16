@@ -175,4 +175,19 @@ export async function generateRepositoryTests(id, selectedFile) {
   return data
 }
 
+export async function executeRepositoryTests(id, selectedFile, testCases) {
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/execute-tests`, {
+    selected_file: selectedFile,
+    test_cases: testCases,
+  })
+  return data
+}
+
+export async function generateRepositoryReport(id, selectedFile) {
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/generate-report`, {
+    selected_file: selectedFile,
+  })
+  return data
+}
+
 export default api
