@@ -608,6 +608,40 @@ def analyze_repository(repository_id: str):
     return success_response(data=metadata, message="Repository analyzed successfully")
 
 
+@app.get("/repositories/{repository_id}/tree")
+def get_repository_tree(repository_id: str):
+    tree = repository_service.get_repository_tree(repository_id)
+    if tree is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+    server_log.info("Retrieved tree for repository '%s'", repository_id)
+    return success_response(data=tree, message="Repository tree retrieved")
+
+
+@app.get("/repositories/{repository_id}/context")
+def get_file_context(repository_id: str, path: str):
+    metadata = repository_service.get_repository(repository_id)
+    if metadata is None:
+        return error_response("not_found", f"Repository '{repository_id}' not found")
+
+    result = repository_service.retrieve_file_context(repository_id, path)
+    if not result.get("found"):
+        return success_response(
+            data={"found": False, "file_path": path, "reason": result.get("error", "Unknown error")},
+            message=result.get("error", "Context not available"),
+        )
+    server_log.info("Retrieved context for '%s' in repository '%s' (%d symbols)", path, repository_id, result.get("total_symbols", 0))
+    return success_response(data=result, message="Context retrieved")
+
+
+@app.get("/repositories/{repository_id}/source-file")
+def get_source_file(repository_id: str, path: str):
+    content = repository_service.get_source_file_content(repository_id, path)
+    if content is None:
+        return error_response("not_found", f"File '{path}' not found in repository '{repository_id}'")
+    server_log.info("Retrieved source file '%s' from repository '%s'", path, repository_id)
+    return success_response(data={"path": path, "content": content}, message="File content retrieved")
+
+
 @app.post("/repositories/{repository_id}/index")
 def index_repository(repository_id: str):
     metadata = repository_service.index_repository(repository_id)

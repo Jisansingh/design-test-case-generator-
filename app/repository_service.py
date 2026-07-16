@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import shutil
+import subprocess
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -266,6 +267,152 @@ def index_repository(repo_id: str) -> Optional[dict]:
         _update_metadata(repo_id, {"status": "READY_FOR_INDEXING"})
 
     return _load_metadata(repo_id)
+
+
+def get_repository_tree(repo_id: str) -> Optional[dict]:
+    source_dir = _source_dir(repo_id)
+    if not source_dir.exists():
+        return None
+
+    def _build_tree(dir_path: Path) -> list[dict]:
+        entries: list[dict] = []
+        for child in sorted(dir_path.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+            rel = child.relative_to(source_dir)
+            if _should_ignore(str(rel)):
+                continue
+            if child.is_dir():
+                children = _build_tree(child)
+                entries.append({
+                    "name": child.name,
+                    "type": "directory",
+                    "path": str(rel),
+                    "children": children,
+                })
+            elif child.is_file():
+                entries.append({
+                    "name": child.name,
+                    "type": "file",
+                    "path": str(rel),
+                })
+        return entries
+
+    return {"tree": _build_tree(source_dir)}
+
+
+def get_source_file_content(repo_id: str, file_path: str) -> Optional[str]:
+    source_dir = _source_dir(repo_id)
+    if not source_dir.exists():
+        return None
+
+    full_path = (source_dir / file_path).resolve()
+    if not str(full_path).startswith(str(source_dir.resolve())):
+        return None
+    if not full_path.is_file():
+        return None
+
+    try:
+        return full_path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError):
+        return None
+
+
+def _cbm_project_name(source_dir: Path) -> str:
+    return str(source_dir.resolve()).lstrip("/").replace("/", "-")
+
+
+def retrieve_file_context(repo_id: str, file_path: str) -> dict:
+    metadata = _load_metadata(repo_id)
+    if metadata is None:
+        return {"found": False, "error": "Repository not found"}
+
+    if metadata.get("status") != "READY":
+        return {"found": False, "error": "Repository is not indexed. Please index it first."}
+
+    source_dir = _source_dir(repo_id)
+    if not source_dir.exists():
+        return {"found": False, "error": "Repository source directory not found"}
+
+    full_path = (source_dir / file_path).resolve()
+    if not str(full_path).startswith(str(source_dir.resolve())):
+        return {"found": False, "error": "Invalid file path"}
+    if not full_path.is_file():
+        return {"found": False, "error": "File not found"}
+
+    project_name = _cbm_project_name(source_dir)
+
+    try:
+        result = subprocess.run(
+            [
+                "codebase-memory-mcp", "cli", "search_graph",
+                "--project", project_name,
+                "--file-pattern", file_path,
+                "--limit", "50",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError:
+        return {"found": False, "error": "Codebase Memory MCP is not installed or not in PATH"}
+    except subprocess.TimeoutExpired:
+        return {"found": False, "error": "Codebase Memory MCP request timed out"}
+
+    if result.returncode != 0:
+        last_line = (result.stderr or "").strip().split("\n")[-1]
+        return {"found": False, "error": last_line or "Context retrieval failed"}
+
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {"found": False, "error": "Failed to parse Codebase Memory MCP response"}
+
+    context = data.get("results", [])
+
+    arch_info = None
+    try:
+        arch_result = subprocess.run(
+            [
+                "codebase-memory-mcp", "cli", "get_architecture",
+                "--project", project_name,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if arch_result.returncode == 0:
+            arch_data = json.loads(arch_result.stdout)
+            arch_info = {
+                "languages": arch_data.get("languages", []),
+                "total_nodes": arch_data.get("total_nodes", 0),
+                "entry_points": [
+                    {"name": e["name"], "file": e.get("file", "")}
+                    for e in arch_data.get("entry_points", [])
+                ][:10],
+                "packages": [
+                    {"name": p["name"], "node_count": p.get("node_count", 0)}
+                    for p in arch_data.get("packages", [])
+                ],
+            }
+    except Exception:
+        arch_info = None
+
+    return {
+        "found": True,
+        "file_path": file_path,
+        "indexed": True,
+        "symbols": [
+            {
+                "name": s.get("name"),
+                "type": s.get("label", "symbol"),
+                "file": s.get("file_path", ""),
+                "lines": f"{s.get('start_line', '?')}-{s.get('end_line', '?')}",
+            }
+            for s in context
+            if s.get("label") in ("Function", "Method", "Class", "Interface", "Variable")
+        ],
+        "total_symbols": len(context),
+        "project_architecture": arch_info,
+    }
 
 
 def delete_repository(repo_id: str) -> bool:

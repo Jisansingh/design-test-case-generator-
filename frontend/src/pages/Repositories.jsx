@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Card } from '../components/common/Card'
 import { Badge } from '../components/common/Badge'
 import { Button } from '../components/common/Button'
@@ -45,6 +46,7 @@ const STATUS_BADGE_VARIANT = {
 }
 
 export default function Repositories() {
+  const navigate = useNavigate()
   const [repos, setRepos] = useState([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -300,6 +302,17 @@ export default function Repositories() {
                   <AnalysisSummary r={r} />
                 </div>
                 <div className="flex gap-2 ml-4">
+                  <Button
+                    variant="secondary"
+                    size="xs"
+                    onClick={() => navigate(`/repositories/${r.repository_id}/explore`)}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                      <circle cx="11" cy="11" r="8" />
+                      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    </svg>
+                    Browse
+                  </Button>
                   {(r.status === 'READY_FOR_ANALYSIS' || !r.languages) && (
                     <Button
                       variant="primary"

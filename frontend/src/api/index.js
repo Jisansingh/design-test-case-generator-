@@ -149,4 +149,23 @@ export async function indexRepository(id) {
   return data
 }
 
+export async function getRepositoryTree(id) {
+  const { data } = await api.get(`/repositories/${encodeURIComponent(id)}/tree`)
+  return data
+}
+
+export async function getSourceFile(id, path) {
+  const { data } = await api.get(`/repositories/${encodeURIComponent(id)}/source-file`, {
+    params: { path },
+  })
+  return data
+}
+
+export async function getFileContext(id, path) {
+  const { data } = await api.get(`/repositories/${encodeURIComponent(id)}/context`, {
+    params: { path },
+  })
+  return data
+}
+
 export default api
