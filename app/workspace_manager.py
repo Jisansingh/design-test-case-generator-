@@ -10,6 +10,8 @@ from app.config import WORKSPACE_DIR
 
 logger = logging.getLogger("server")
 
+REPO_PREFIX = "repo_"
+
 EXTENSION_MAP: dict[str, str] = {
     "python": "py",
     "javascript": "js",
@@ -111,7 +113,7 @@ class WorkspaceManager:
         if not self.workspace_dir.exists():
             return projects
         for child in sorted(self.workspace_dir.iterdir()):
-            if child.is_dir():
+            if child.is_dir() and not child.name.startswith(REPO_PREFIX):
                 metadata = self._load_json(child / "metadata.json")
                 if metadata:
                     projects.append(metadata)
@@ -129,7 +131,7 @@ class WorkspaceManager:
         count = 0
         if self.workspace_dir.exists():
             for child in list(self.workspace_dir.iterdir()):
-                if child.is_dir():
+                if child.is_dir() and not child.name.startswith(REPO_PREFIX):
                     shutil.rmtree(child)
                     count += 1
             if count:

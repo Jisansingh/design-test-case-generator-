@@ -27,6 +27,8 @@ export default function Projects() {
     })
   }, [projects, search, filterLang])
 
+  const FILTER_LABELS = { repository: 'Repository', cpp: 'Workspace' }
+
   const langs = useMemo(() => {
     return [...new Set(projects.map(p => p.language).filter(Boolean))]
   }, [projects])
@@ -73,8 +75,8 @@ export default function Projects() {
         <select value={filterLang} onChange={e => setFilterLang(e.target.value)}
           className="bg-surface-900 border border-surface-700 rounded-lg px-3 py-1.5 text-sm text-surface-200 focus:outline-none focus:border-accent-500/50"
         >
-          <option value="">All Languages</option>
-          {langs.map(l => <option key={l} value={l}>{l || 'auto'}</option>)}
+          <option value="">All</option>
+          {langs.map(l => <option key={l} value={l}>{FILTER_LABELS[l] || l || 'auto'}</option>)}
         </select>
         <Button variant="ghost" size="sm" onClick={refresh}>Refresh</Button>
         <Button variant="danger" size="sm" disabled={projects.length === 0} onClick={() => setShowDeleteAll(true)}>
