@@ -26,7 +26,7 @@ function FileIcon({ type, name }) {
   )
 }
 
-export function FileTree({ tree, selectedPath, onSelect, loading }) {
+export function FileTree({ tree, selectedPaths, onSelect, onToggle, loading, isSourceFile }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-8">
@@ -47,18 +47,21 @@ export function FileTree({ tree, selectedPath, onSelect, loading }) {
         <TreeNode
           key={node.path}
           node={node}
-          selectedPath={selectedPath}
+          selectedPaths={selectedPaths}
           onSelect={onSelect}
+          onToggle={onToggle}
+          isSourceFile={isSourceFile}
         />
       ))}
     </div>
   )
 }
 
-function TreeNode({ node, selectedPath, onSelect, depth = 0 }) {
+function TreeNode({ node, selectedPaths, onSelect, onToggle, depth = 0, isSourceFile }) {
   const [expanded, setExpanded] = useState(depth < 1)
   const isDir = node.type === 'directory'
-  const isSelected = selectedPath === node.path
+  const isSupported = !isDir && isSourceFile(node.path)
+  const isChecked = selectedPaths.has(node.path)
 
   const handleClick = () => {
     if (isDir) {
@@ -70,40 +73,58 @@ function TreeNode({ node, selectedPath, onSelect, depth = 0 }) {
 
   return (
     <div>
-      <button
-        onClick={handleClick}
-        className={`w-full flex items-center gap-2 px-2 py-1 text-xs rounded-md transition-colors text-left ${
-          isSelected
-            ? 'bg-accent-600/15 text-accent-400'
-            : 'text-surface-400 hover:text-surface-200 hover:bg-surface-800'
+      <div
+        className={`flex items-center gap-1 px-2 py-1 text-xs rounded-md transition-colors ${
+          isChecked
+            ? 'bg-accent-600/15'
+            : 'hover:bg-surface-800'
         }`}
-        style={{ paddingLeft: `${12 + depth * 16}px` }}
-        title={node.path}
+        style={{ paddingLeft: `${8 + depth * 16}px` }}
       >
-        {isDir && (
-          <svg
-            width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
-            className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
-          >
-            <polyline points="9 18 15 12 9 6" />
-          </svg>
+        {!isDir && isSupported && (
+          <input
+            type="checkbox"
+            checked={isChecked}
+            onChange={() => onToggle(node.path)}
+            className="flex-shrink-0 accent-accent-500"
+            onClick={(e) => e.stopPropagation()}
+          />
         )}
-        {!isDir && <span className="w-[10px]" />}
-        <FileIcon type={node.type} name={node.name} />
-        <span className="truncate">{node.name}</span>
-        {isDir && node.children && (
-          <span className="ml-auto text-surface-600 text-[10px]">{node.children.length}</span>
+        {!isDir && !isSupported && (
+          <span className="w-4 flex-shrink-0" />
         )}
-      </button>
+        <button
+          onClick={handleClick}
+          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+          title={node.path}
+        >
+          {isDir && (
+            <svg
+              width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+              className={`flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
+            >
+              <polyline points="9 18 15 12 9 6" />
+            </svg>
+          )}
+          {!isDir && <span className="w-[10px] flex-shrink-0" />}
+          <FileIcon type={node.type} name={node.name} />
+          <span className={`truncate ${isChecked ? 'text-accent-400' : 'text-surface-400'}`}>{node.name}</span>
+          {isDir && node.children && (
+            <span className="ml-auto text-surface-600 text-[10px]">{node.children.length}</span>
+          )}
+        </button>
+      </div>
       {isDir && expanded && node.children && (
         <div>
           {node.children.map((child) => (
             <TreeNode
               key={child.path}
               node={child}
-              selectedPath={selectedPath}
+              selectedPaths={selectedPaths}
               onSelect={onSelect}
+              onToggle={onToggle}
               depth={depth + 1}
+              isSourceFile={isSourceFile}
             />
           ))}
         </div>

@@ -136,16 +136,18 @@ class TimelineResponse(BaseModel):
 
 
 class GenerateTestsRequest(BaseModel):
-    selected_file: str
+    selected_files: List[str]
 
 
 class RepositoryExecutionRequest(BaseModel):
-    selected_file: str
-    test_cases: TestCases
+    selected_files: List[str]
+    test_cases: Optional[TestCases] = None
+    test_cases_map: Optional[dict[str, TestCases]] = None
 
 
 class RepositoryReportRequest(BaseModel):
-    selected_file: str
+    selected_files: List[str]
+    execution_results: Optional[dict[str, Any]] = None
 
 
 class RepositoryInfo(BaseModel):

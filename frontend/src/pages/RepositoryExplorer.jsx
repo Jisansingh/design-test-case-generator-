@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import Editor from '@monaco-editor/react'
 import { Badge } from '../components/common/Badge'
@@ -325,6 +325,20 @@ function ReportPanel({ reportText, generating, onGenerate, onDownload }) {
   )
 }
 
+function collectSupportedFiles(nodes) {
+  const files = []
+  for (const node of nodes) {
+    if (node.type === 'file') {
+      if (isSourceFile(node.path)) {
+        files.push(node.path)
+      }
+    } else if (node.type === 'directory' && node.children) {
+      files.push(...collectSupportedFiles(node.children))
+    }
+  }
+  return files
+}
+
 export default function RepositoryExplorer() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -333,6 +347,7 @@ export default function RepositoryExplorer() {
   const [tree, setTree] = useState(null)
   const [treeLoading, setTreeLoading] = useState(true)
   const [selectedFile, setSelectedFile] = useState(null)
+  const [selectedFiles, setSelectedFiles] = useState(new Set())
   const [fileContent, setFileContent] = useState(null)
   const [fileLoading, setFileLoading] = useState(false)
   const [context, setContext] = useState(null)
@@ -344,7 +359,29 @@ export default function RepositoryExplorer() {
   const [executing, setExecuting] = useState(false)
   const [reportText, setReportText] = useState(null)
   const [reportGenerating, setReportGenerating] = useState(false)
+  const [generatedFiles, setGeneratedFiles] = useState(null)
+  const [executedFiles, setExecutedFiles] = useState(null)
+  const [summary, setSummary] = useState(null)
+  const [expandedFiles, setExpandedFiles] = useState(new Set())
   const fetchIdRef = useRef(0)
+  const selectAllRef = useRef(null)
+
+  const allSupportedFiles = useMemo(() => {
+    return tree ? collectSupportedFiles(tree) : []
+  }, [tree])
+
+  const supportedSelectedFiles = useMemo(() => {
+    return [...selectedFiles].filter(f => isSourceFile(f))
+  }, [selectedFiles])
+
+  const isAllSelected = selectedFiles.size === allSupportedFiles.length && allSupportedFiles.length > 0
+  const isIndeterminate = selectedFiles.size > 0 && !isAllSelected
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = isIndeterminate
+    }
+  }, [isIndeterminate])
 
   useEffect(() => {
     async function load() {
@@ -375,8 +412,11 @@ export default function RepositoryExplorer() {
     setContext(null)
     setContextLoading(true)
     setTestCases(null)
+    setGeneratedFiles(null)
+    setExecutedFiles(null)
     setExecutionResult(null)
     setReportText(null)
+    setSummary(null)
     setError(null)
 
     try {
@@ -405,54 +445,125 @@ export default function RepositoryExplorer() {
     }
   }, [id])
 
+  const handleToggle = useCallback((filePath) => {
+    setSelectedFiles(prev => {
+      const next = new Set(prev)
+      if (next.has(filePath)) {
+        next.delete(filePath)
+      } else {
+        next.add(filePath)
+      }
+      return next
+    })
+    setTestCases(null)
+    setGeneratedFiles(null)
+    setExecutedFiles(null)
+    setExecutionResult(null)
+    setReportText(null)
+    setSummary(null)
+    setError(null)
+  }, [])
+
+  const handleSelectAll = useCallback((checked) => {
+    setSelectedFiles(checked ? new Set(allSupportedFiles) : new Set())
+    setTestCases(null)
+    setGeneratedFiles(null)
+    setExecutedFiles(null)
+    setExecutionResult(null)
+    setReportText(null)
+    setSummary(null)
+    setError(null)
+  }, [allSupportedFiles])
+
   const handleGenerateTests = useCallback(async () => {
-    if (!selectedFile) return
+    if (selectedFiles.size === 0) return
     setTestGenerating(true)
     setTestCases(null)
+    setGeneratedFiles(null)
+    setExecutedFiles(null)
+    setExecutionResult(null)
+    setReportText(null)
+    setSummary(null)
     setError(null)
     try {
-      const res = await api.generateRepositoryTests(id, selectedFile)
-      if (res.success) setTestCases(res.data.test_cases)
-      else setError(res.error?.message || 'Test generation failed')
+      const res = await api.generateRepositoryTests(id, [...selectedFiles])
+      if (res.success) {
+        setGeneratedFiles(res.data.files)
+        setSummary(res.data.summary)
+        if (res.data.files.length === 1 && res.data.files[0].status === 'success') {
+          setTestCases(res.data.files[0].test_cases)
+        }
+      } else {
+        setError(res.error?.message || 'Test generation failed')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
       setTestGenerating(false)
     }
-  }, [id, selectedFile])
+  }, [id, selectedFiles])
 
   const handleExecuteTests = useCallback(async () => {
-    if (!selectedFile || !testCases) return
+    if (selectedFiles.size === 0) return
+    if (!testCases && !generatedFiles) return
     setExecuting(true)
     setExecutionResult(null)
+    setExecutedFiles(null)
     setReportText(null)
+    setSummary(null)
     setError(null)
     try {
-      const res = await api.executeRepositoryTests(id, selectedFile, testCases)
-      if (res.success) setExecutionResult(res.data.execution_result)
-      else setError(res.error?.message || 'Test execution failed')
+      let testCasesMap = null
+      if (generatedFiles && generatedFiles.length > 0) {
+        testCasesMap = {}
+        generatedFiles.forEach(f => {
+          if (f.test_cases) testCasesMap[f.selected_file] = f.test_cases
+        })
+      }
+      const res = await api.executeRepositoryTests(id, [...selectedFiles], testCases, testCasesMap)
+      if (res.success) {
+        setExecutedFiles(res.data.files)
+        setSummary(res.data.summary)
+        if (res.data.files.length === 1 && res.data.files[0].status === 'success') {
+          setExecutionResult(res.data.files[0].execution_result)
+        }
+      } else {
+        setError(res.error?.message || 'Test execution failed')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
       setExecuting(false)
     }
-  }, [id, selectedFile, testCases])
+  }, [id, selectedFiles, testCases, generatedFiles])
 
   const handleGenerateReport = useCallback(async () => {
-    if (!selectedFile) return
+    if (selectedFiles.size === 0) return
+    if (!executionResult && !executedFiles) return
     setReportGenerating(true)
     setReportText(null)
     setError(null)
     try {
-      const res = await api.generateRepositoryReport(id, selectedFile)
-      if (res.success) setReportText(res.data.report)
-      else setError(res.error?.message || 'Report generation failed')
+      let executionResults = null
+      if (executedFiles && executedFiles.length > 0) {
+        executionResults = {}
+        executedFiles.forEach(f => {
+          if (f.execution_result) executionResults[f.selected_file] = f.execution_result
+        })
+      }
+      const res = await api.generateRepositoryReport(id, [...selectedFiles], executionResults)
+      if (res.success) {
+        setReportText(res.data.report)
+        setSummary(res.data.summary)
+      } else {
+        setError(res.error?.message || 'Report generation failed')
+      }
     } catch (e) {
       setError(e.message)
     } finally {
       setReportGenerating(false)
     }
-  }, [id, selectedFile])
+  }, [id, selectedFiles, executionResult, executedFiles])
 
   const handleDownloadReport = useCallback(() => {
     if (!selectedFile) return
@@ -508,11 +619,33 @@ export default function RepositoryExplorer() {
             <h2 className="text-xs font-semibold text-surface-500 uppercase tracking-wider">Files</h2>
             {tree && <span className="text-[10px] text-surface-600">{tree.length} items</span>}
           </div>
+
+          {allSupportedFiles.length > 0 && (
+            <label className="flex items-center gap-2 px-2 py-1.5 mb-2 rounded-md hover:bg-surface-800 cursor-pointer text-xs">
+              <input
+                ref={selectAllRef}
+                type="checkbox"
+                checked={isAllSelected}
+                onChange={(e) => handleSelectAll(e.target.checked)}
+                className="accent-accent-500 flex-shrink-0"
+              />
+              <span className="text-surface-400 font-medium">Select All Supported Files</span>
+            </label>
+          )}
+
+          {selectedFiles.size > 0 && (
+            <div className="px-2 pb-2 text-xs text-accent-400 font-medium">
+              {selectedFiles.size} file{selectedFiles.size !== 1 ? 's' : ''} selected
+            </div>
+          )}
+
           <FileTree
             tree={tree}
-            selectedPath={selectedFile}
+            selectedPaths={selectedFiles}
             onSelect={handleSelect}
+            onToggle={handleToggle}
             loading={treeLoading}
+            isSourceFile={isSourceFile}
           />
         </div>
 
@@ -527,7 +660,7 @@ export default function RepositoryExplorer() {
                   </svg>
                   <span className="text-xs text-surface-300 font-mono truncate">{selectedFile}</span>
                 </div>
-                {isSourceFile(selectedFile) ? (
+                {supportedSelectedFiles.length > 0 ? (
                   <Button
                     variant="secondary"
                     size="xs"
@@ -536,6 +669,7 @@ export default function RepositoryExplorer() {
                     disabled={testGenerating}
                   >
                     Generate Tests
+                    {selectedFiles.size > 1 ? ` (${selectedFiles.size} files)` : ''}
                   </Button>
                 ) : (
                   <span className="text-[10px] text-surface-500 italic">
@@ -579,32 +713,120 @@ export default function RepositoryExplorer() {
                 loading={contextLoading}
                 filePath={selectedFile}
               />
-              <TestResultsPanel
-                testCases={testCases}
-                generating={testGenerating}
-                onGenerate={handleGenerateTests}
-              />
-              {testCases && !executing && !executionResult && (
-                <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
-                  <Button onClick={handleExecuteTests}>Execute Tests</Button>
-                </div>
+
+              {generatedFiles && generatedFiles.length > 1 ? (
+                <>
+                  {summary && (
+                    <div className="border-t border-surface-800 px-4 py-3 bg-surface-900">
+                      <div className="flex items-center gap-6 text-xs">
+                        <span className="text-surface-400">Files: <span className="text-surface-200 font-medium">{summary.files_processed}/{summary.files_selected}</span></span>
+                        {summary.tests_generated !== undefined && (
+                          <span className="text-surface-400">Tests: <span className="text-surface-200 font-medium">{summary.tests_generated}</span></span>
+                        )}
+                        {summary.tests_executed !== undefined && (
+                          <>
+                            <span className="text-surface-400">Executed: <span className="text-surface-200 font-medium">{summary.tests_executed}</span></span>
+                            <span className="text-emerald-400">Passed: {summary.passed}</span>
+                            <span className="text-red-400">Failed: {summary.failed}</span>
+                            <span className="text-surface-400">Rate: <span className="text-surface-200 font-medium">{summary.overall_pass_percentage}%</span></span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="border-t border-surface-800 divide-y divide-surface-800">
+                    {(generatedFiles || executedFiles || []).map((f, i) => {
+                      const fileResult = executedFiles ? executedFiles.find(ef => ef.selected_file === f.selected_file) || f : f
+                      const isExpanded = expandedFiles.has(f.selected_file)
+                      return (
+                        <div key={f.selected_file}>
+                          <button
+                            onClick={() => setExpandedFiles(prev => {
+                              const next = new Set(prev)
+                              if (next.has(f.selected_file)) next.delete(f.selected_file)
+                              else next.add(f.selected_file)
+                              return next
+                            })}
+                            className="w-full flex items-center gap-3 px-4 py-2.5 text-xs hover:bg-surface-900/50 transition-colors text-left"
+                          >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"
+                              className={`flex-shrink-0 transition-transform text-surface-500 ${isExpanded ? 'rotate-90' : ''}`}
+                            >
+                              <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                            <span className={`font-mono truncate flex-1 ${f.status === 'error' ? 'text-red-400' : 'text-surface-200'}`}>{f.selected_file}</span>
+                            {f.status === 'success' && <span className="text-emerald-400 font-medium">Success</span>}
+                            {f.status === 'error' && <span className="text-red-400 font-medium">Failed</span>}
+                            {f.status === 'skipped' && <span className="text-surface-500 font-medium">Skipped</span>}
+                          </button>
+                          {isExpanded && (
+                            <div className="px-4 pb-3">
+                              {f.status === 'error' && (
+                                <p className="text-xs text-red-400 bg-red-900/10 rounded px-3 py-2">{f.error || 'Unknown error'}</p>
+                              )}
+                              {fileResult.test_cases && (
+                                <TestResultsPanel testCases={fileResult.test_cases} generating={false} onGenerate={() => {}} />
+                              )}
+                              {fileResult.execution_result && (
+                                <ExecutionPanel result={fileResult.execution_result} generating={false} onExecute={() => {}} />
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {!executing && !executedFiles && (
+                    <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                      <Button onClick={handleExecuteTests}>Execute Tests</Button>
+                    </div>
+                  )}
+
+                  {executedFiles && !reportGenerating && !reportText && (
+                    <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                      <Button onClick={handleGenerateReport}>Generate Report</Button>
+                    </div>
+                  )}
+
+                  <ReportPanel
+                    reportText={reportText}
+                    generating={reportGenerating}
+                    onGenerate={handleGenerateReport}
+                    onDownload={handleDownloadReport}
+                  />
+                </>
+              ) : (
+                <>
+                  <TestResultsPanel
+                    testCases={testCases}
+                    generating={testGenerating}
+                    onGenerate={handleGenerateTests}
+                  />
+                  {(testCases || generatedFiles) && !executing && !executionResult && (
+                    <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                      <Button onClick={handleExecuteTests}>Execute Tests</Button>
+                    </div>
+                  )}
+                  <ExecutionPanel
+                    result={executionResult}
+                    generating={executing}
+                    onExecute={handleExecuteTests}
+                  />
+                  {executionResult && !reportGenerating && !reportText && (
+                    <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
+                      <Button onClick={handleGenerateReport}>Generate Report</Button>
+                    </div>
+                  )}
+                  <ReportPanel
+                    reportText={reportText}
+                    generating={reportGenerating}
+                    onGenerate={handleGenerateReport}
+                    onDownload={handleDownloadReport}
+                  />
+                </>
               )}
-              <ExecutionPanel
-                result={executionResult}
-                generating={executing}
-                onExecute={handleExecuteTests}
-              />
-              {executionResult && !reportGenerating && !reportText && (
-                <div className="border-t border-surface-800 px-4 py-3 flex justify-center">
-                  <Button onClick={handleGenerateReport}>Generate Report</Button>
-                </div>
-              )}
-              <ReportPanel
-                reportText={reportText}
-                generating={reportGenerating}
-                onGenerate={handleGenerateReport}
-                onDownload={handleDownloadReport}
-              />
             </div>
           ) : (
             <div className="flex-1 flex items-center justify-center">

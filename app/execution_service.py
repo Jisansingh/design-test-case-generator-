@@ -150,3 +150,80 @@ def generate_text_report(execution_report):
     report_text = "\n".join(lines)
 
     return report_text
+
+
+def generate_combined_repository_report(files, summary):
+    lines = []
+
+    lines.append("=" * 50)
+    lines.append("     REPOSITORY TEST EXECUTION REPORT")
+    lines.append("=" * 50)
+    lines.append("")
+
+    lines.append("REPOSITORY SUMMARY")
+    lines.append("-" * 50)
+    lines.append(f"  Files Selected   :  {summary['files_selected']}")
+    lines.append(f"  Files Processed  :  {summary['files_processed']}")
+    lines.append(f"  Files Skipped    :  {summary['files_skipped']}")
+    lines.append("")
+
+    lines.append("OVERALL STATISTICS")
+    lines.append("-" * 50)
+    lines.append(f"  Tests Generated  :  {summary['tests_generated']}")
+    lines.append(f"  Tests Executed   :  {summary['tests_executed']}")
+    lines.append(f"  Passed           :  {summary['passed']}")
+    lines.append(f"  Failed           :  {summary['failed']}")
+    lines.append(f"  Pass Rate        :  {summary['overall_pass_percentage']}%")
+    lines.append("")
+
+    lines.append("=" * 50)
+    lines.append("           PER-FILE RESULTS")
+    lines.append("=" * 50)
+    lines.append("")
+
+    for file_result in files:
+        sf = file_result["selected_file"]
+        status = file_result.get("status", "unknown")
+
+        lines.append(f"  File: {sf}")
+        lines.append(f"  Status: {status.upper()}")
+        lines.append("-" * 50)
+
+        if status == "error":
+            lines.append(f"  Error: {file_result.get('error', 'Unknown error')}")
+            lines.append("")
+            continue
+
+        exec_result = file_result.get("execution_result")
+        if exec_result:
+            s = exec_result["summary"]
+            lines.append(f"  Total : {s['total']}  |  Passed : {s['passed']}  |  Failed : {s['failed']}")
+            lines.append("")
+
+            def print_section(section_name, section_results):
+                if not section_results:
+                    return
+                lines.append(f"  {section_name}")
+                lines.append(f"  {'-' * 46}")
+                for r in section_results:
+                    lines.append(f"  [{r['status']}]  {r['test_case']}")
+                    lines.append(f"             Remarks: {r['remarks']}")
+                    lines.append("")
+
+            print_section("Functional Tests", exec_result.get("functional", []))
+            print_section("Edge Cases", exec_result.get("edge_cases", []))
+            print_section("Security Tests", exec_result.get("security", []))
+        else:
+            tc = file_result.get("test_cases")
+            if tc:
+                total = len(tc.get("functional", [])) + len(tc.get("edge_cases", [])) + len(tc.get("security", []))
+                lines.append(f"  Tests Generated: {total}")
+                lines.append("")
+
+        lines.append("")
+
+    lines.append("=" * 50)
+    lines.append("           END OF REPORT")
+    lines.append("=" * 50)
+
+    return "\n".join(lines)

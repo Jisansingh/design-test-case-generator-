@@ -100,7 +100,16 @@ def generate_test_cases(design: str) -> dict:
     user_prompt = f"Design: {design}"
     result = {"functional": [], "edge_cases": [], "security": []}
 
-    def _call_llm() -> str:
+    # Log estimated prompt size before sending
+    total_prompt_chars = len(SYSTEM_PROMPT) + len(user_prompt)
+    logger.info(
+        "Groq request prep: system_prompt=%d chars, user_prompt=%d chars, total=%d chars, "
+        "estimated_prompt_tokens=~%d (at 3 chars/token), max_tokens=%d",
+        len(SYSTEM_PROMPT), len(user_prompt), total_prompt_chars,
+        total_prompt_chars // 3, 4096,
+    )
+
+    def _call_llm() -> tuple[str, dict]:
         resp = client.chat.completions.create(
             model="llama-3.1-8b-instant",
             messages=[
@@ -108,13 +117,25 @@ def generate_test_cases(design: str) -> dict:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=TEMPERATURE,
+            max_tokens=4096,
         )
-        return resp.choices[0].message.content
+        usage = {
+            "prompt_tokens": resp.usage.prompt_tokens,
+            "completion_tokens": resp.usage.completion_tokens,
+            "total_tokens": resp.usage.total_tokens,
+        }
+        content = resp.choices[0].message.content
+        logger.info(
+            "Groq response: prompt_tokens=%d completion_tokens=%d total_tokens=%d content_len=%d",
+            usage["prompt_tokens"], usage["completion_tokens"],
+            usage["total_tokens"], len(content),
+        )
+        return content, usage
 
     # Attempt generation with a retry block for robust error handling
     for attempt in range(2):
         try:
-            raw_output = _call_llm()
+            raw_output, actual_usage = _call_llm()
             cleaned_json = _clean_json_str(raw_output)
             data = json.loads(cleaned_json)
 

@@ -168,25 +168,28 @@ export async function getFileContext(id, path) {
   return data
 }
 
-export async function generateRepositoryTests(id, selectedFile) {
+export async function generateRepositoryTests(id, selectedFiles) {
   const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/generate-tests`, {
-    selected_file: selectedFile,
+    selected_files: selectedFiles,
   })
   return data
 }
 
-export async function executeRepositoryTests(id, selectedFile, testCases) {
-  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/execute-tests`, {
-    selected_file: selectedFile,
-    test_cases: testCases,
-  })
+export async function executeRepositoryTests(id, selectedFiles, testCases, testCasesMap) {
+  const body = { selected_files: selectedFiles }
+  if (testCasesMap) {
+    body.test_cases_map = testCasesMap
+  } else {
+    body.test_cases = testCases
+  }
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/execute-tests`, body)
   return data
 }
 
-export async function generateRepositoryReport(id, selectedFile) {
-  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/generate-report`, {
-    selected_file: selectedFile,
-  })
+export async function generateRepositoryReport(id, selectedFiles, executionResults) {
+  const body = { selected_files: selectedFiles }
+  if (executionResults) body.execution_results = executionResults
+  const { data } = await api.post(`/repositories/${encodeURIComponent(id)}/generate-report`, body)
   return data
 }
 

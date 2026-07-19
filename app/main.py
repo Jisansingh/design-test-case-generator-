@@ -29,7 +29,7 @@ from app.schemas import (
     RepositoryReportRequest,
 )
 from app import repository_service
-from app.execution_service import execute_test_cases, generate_text_report
+from app.execution_service import execute_test_cases, generate_text_report, generate_combined_repository_report
 from app.crash_service import simulate_crash, analyze_user_code, compile_and_run_program
 from app.crash_ai_service import analyze_backtrace
 
@@ -107,9 +107,12 @@ def _update_stats_from_execution(project_name: str, exec_result: dict, duration:
     })
 
 
-def _make_repo_project_name(repo_id: str, file_path: str) -> str:
-    safe = re.sub(r'[^a-zA-Z0-9_]', '_', file_path)
-    return f"rexec_{repo_id[:8]}_{safe}"
+def _make_repo_project_name(repo_id: str, files: list[str]) -> str:
+    if len(files) == 1:
+        safe = re.sub(r'[^a-zA-Z0-9_]', '_', files[0])
+        return f"rexec_{repo_id[:8]}_{safe}"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"rexec_{repo_id[:8]}_batch_{timestamp}"
 
 
 @app.get("/")
@@ -669,49 +672,218 @@ def index_repository(repository_id: str):
     return success_response(data=metadata, message="Repository indexed successfully")
 
 
+def _build_test_prompt(fpath: str, source_content: str, context: dict) -> str:
+    """
+    Build a prompt for LLM-based test case generation.
+
+    Token limit derivation (model: llama-3.1-8b-instant):
+      Context window          131,072 tokens
+      - max_tokens (output)     4,096 tokens (set in generate_test_cases)
+      - system prompt            ~600 tokens (app/llm_service.py SYSTEM_PROMPT)
+      - safety margin           7,000 tokens (for tokenization estimation variance
+                                  across code-heavy vs prose, ≈5% buffer)
+      = available for input   119,376 tokens
+      × chars/token (code)          2.5  (conservative; code often <3 chars/token)
+      = max_input_chars       298,440 chars
+
+    Applies progressive context reduction to stay under the limit:
+      1. Symbols list is truncated (oldest entries removed)
+      2. Architecture summary is removed
+      3. Source code is truncated from the end (last resort)
+
+    Preserves instruction header always. All truncation is logged.
+    """
+    # Derived from model specs above — see docstring for full calculation
+    MAX_CHARS = 298_000
+    CHARS_PER_TOKEN = 3
+
+    def _estimate(text: str) -> int:
+        return len(text) // CHARS_PER_TOKEN
+
+    header = f"Generate test cases for the following source code file:\n\nFile: {fpath}"
+    source_block = f"Source Code:\n```\n{source_content}\n```"
+
+    core = f"{header}\n\n{source_block}"
+
+    # Last resort: truncate source code
+    if len(core) > MAX_CHARS:
+        keep = MAX_CHARS - len(header) - 200
+        truncated = source_content[:max(keep, 0)]
+        note = f"\n\n[Note: source truncated from {len(source_content):,} to {len(truncated):,} chars ({_estimate(source_content)} → {_estimate(truncated)} tokens) to fit token limit]"
+        source_block = f"Source Code:\n```\n{truncated}\n```{note}"
+        core = f"{header}\n\n{source_block}"
+        server_log.warning("Source code truncated for '%s': %d → %d chars (%d → %d tokens)",
+                           fpath, len(source_content), len(truncated),
+                           _estimate(source_content), _estimate(truncated))
+
+    if not context.get("found"):
+        return core
+
+    parts = [core]
+    available = MAX_CHARS - len(core)
+
+    # Add architecture (most compact, lowest value if removed)
+    arch = context.get("project_architecture")
+    if arch and available > 100:
+        arch_text = f"Project architecture: {arch.get('total_nodes', 0)} nodes, {arch.get('languages', [])}"
+        parts.append(arch_text)
+        available -= len(arch_text) + 2
+
+    # Add symbols, reducing if needed to fit available space
+    symbols = context.get("symbols", [])
+    if symbols and available > 200:
+        header_text = "Code graph symbols:\n"
+        symbol_lines = []
+        omitted = 0
+        for s in symbols:
+            line = f"  - {s['type']}: {s['name']} ({s['lines']})"
+            need = len(line) + 1
+            # Reserve space for the header and the omission note
+            reserve = len(header_text) + 80  # room for omission notice
+            if sum(len(l) for l in symbol_lines) + need + reserve <= available:
+                symbol_lines.append(line)
+            else:
+                omitted += 1
+        if symbol_lines:
+            block = header_text + "\n".join(symbol_lines)
+            if omitted:
+                block += f"\n  (... {omitted} more symbols omitted)"
+            parts.append(block)
+            if omitted:
+                server_log.info("Symbols truncated for '%s': %d → %d symbols", fpath, len(symbols), len(symbol_lines))
+
+    return "\n\n".join(parts)
+
+
+def _compute_generation_summary(files):
+    total = 0
+    success = 0
+    skipped = 0
+    tests_generated = 0
+    for f in files:
+        if f["status"] == "success":
+            success += 1
+            tc = f.get("test_cases", {})
+            tests_generated += len(tc.get("functional", [])) + len(tc.get("edge_cases", [])) + len(tc.get("security", []))
+        elif f["status"] == "skipped":
+            skipped += 1
+        total += 1
+    return {
+        "files_selected": total,
+        "files_processed": success,
+        "files_skipped": skipped,
+        "files_with_errors": total - success - skipped,
+        "tests_generated": tests_generated,
+    }
+
+
+def _merge_execution_results(files):
+    total = 0
+    passed = 0
+    failed = 0
+    all_functional = []
+    all_edge = []
+    all_security = []
+    for f in files:
+        if f["status"] == "success" and f.get("execution_result"):
+            r = f["execution_result"]
+            s = r["summary"]
+            total += s["total"]
+            passed += s["passed"]
+            failed += s["failed"]
+            all_functional.extend(r.get("functional", []))
+            all_edge.extend(r.get("edge_cases", []))
+            all_security.extend(r.get("security", []))
+    return {
+        "summary": {"total": total, "passed": passed, "failed": failed},
+        "functional": all_functional,
+        "edge_cases": all_edge,
+        "security": all_security,
+    }
+
+
+def _compute_execution_summary(files):
+    total_tests = 0
+    passed = 0
+    failed = 0
+    tests_generated = 0
+    files_processed = 0
+    files_skipped = 0
+    for f in files:
+        if f["status"] == "success" and f.get("execution_result"):
+            files_processed += 1
+            s = f["execution_result"]["summary"]
+            total_tests += s["total"]
+            passed += s["passed"]
+            failed += s["failed"]
+
+            tc = f.get("test_cases")
+            if tc:
+                tests_generated += len(tc.get("functional", [])) + len(tc.get("edge_cases", [])) + len(tc.get("security", []))
+            else:
+                tests_generated += s["total"]
+        elif f["status"] == "skipped":
+            files_skipped += 1
+            tc = f.get("test_cases")
+            if tc:
+                tests_generated += len(tc.get("functional", [])) + len(tc.get("edge_cases", [])) + len(tc.get("security", []))
+    rate = round((passed / max(total_tests, 1)) * 100, 2)
+    return {
+        "files_selected": len(files),
+        "files_processed": files_processed,
+        "files_skipped": files_skipped,
+        "files_with_errors": len(files) - files_processed - files_skipped,
+        "tests_generated": tests_generated,
+        "tests_executed": total_tests,
+        "passed": passed,
+        "failed": failed,
+        "overall_pass_percentage": rate,
+    }
+
+
 @app.post("/repositories/{repository_id}/generate-tests")
 def generate_repository_tests(repository_id: str, request: GenerateTestsRequest):
     metadata = repository_service.get_repository(repository_id)
     if metadata is None:
         return error_response("not_found", f"Repository '{repository_id}' not found")
 
-    source_content = repository_service.get_source_file_content(repository_id, request.selected_file)
-    if source_content is None:
-        return error_response("not_found", f"File '{request.selected_file}' not found")
+    selected_files = request.selected_files
+    if not selected_files:
+        return error_response("validation_error", "At least one file must be selected.")
 
-    ext = Path(request.selected_file).suffix.lower()
-    if ext not in GENERATION_EXTENSIONS:
-        return error_response("unsupported_file", "Test generation is only available for supported source code files.")
+    files = []
+    for fpath in selected_files:
+        source_content = repository_service.get_source_file_content(repository_id, fpath)
+        if source_content is None:
+            files.append({"selected_file": fpath, "status": "error", "error": "File not found"})
+            continue
+        ext = Path(fpath).suffix.lower()
+        if ext not in GENERATION_EXTENSIONS:
+            files.append({"selected_file": fpath, "status": "skipped", "error": "Unsupported file type"})
+            continue
 
-    context = repository_service.retrieve_file_context(repository_id, request.selected_file)
+        try:
+            context = repository_service.retrieve_file_context(repository_id, fpath)
+            prompt = _build_test_prompt(fpath, source_content, context)
+            server_log.info("Generating tests for '%s' in repository '%s'", fpath, repository_id)
+            start = time.time()
+            test_cases = generate_test_cases(prompt)
+            duration = time.time() - start
+            total = len(test_cases.get("functional", [])) + len(test_cases.get("edge_cases", [])) + len(test_cases.get("security", []))
+            server_log.info("Generated %d test cases for '%s' in %.2fs", total, fpath, duration)
+            files.append({"selected_file": fpath, "test_cases": test_cases, "status": "success"})
+        except Exception as e:
+            server_log.error("Test generation failed for '%s': %s", fpath, e)
+            files.append({"selected_file": fpath, "status": "error", "error": str(e)})
 
-    prompt_parts = [
-        f"Generate test cases for the following source code file:\n\nFile: {request.selected_file}",
-        f"Source Code:\n```\n{source_content}\n```",
-    ]
-    if context.get("found"):
-        symbols = context.get("symbols", [])
-        if symbols:
-            symbol_lines = "\n".join(f"  - {s['type']}: {s['name']} ({s['lines']})" for s in symbols)
-            prompt_parts.append(f"Code graph symbols:\n{symbol_lines}")
-        arch = context.get("project_architecture")
-        if arch:
-            prompt_parts.append(f"Project architecture: {arch.get('total_nodes', 0)} nodes, {arch.get('languages', [])}")
-
-    prompt = "\n\n".join(prompt_parts)
-    server_log.info("Generating tests for '%s' in repository '%s'", request.selected_file, repository_id)
-
-    start = time.time()
-    test_cases = generate_test_cases(prompt)
-    duration = time.time() - start
-
-    total = len(test_cases.get("functional", [])) + len(test_cases.get("edge_cases", [])) + len(test_cases.get("security", []))
-    server_log.info("Generated %d test cases for '%s' in %.2fs", total, request.selected_file, duration)
-
-    return success_response(data={
-        "selected_file": request.selected_file,
-        "test_cases": test_cases,
-    }, message=f"Generated {total} test cases")
+    summary = _compute_generation_summary(files)
+    server_log.info("Generated tests for %d files in repository '%s': %d success, %d errors, %d skipped",
+                    len(selected_files), repository_id,
+                    summary["files_processed"],
+                    len(selected_files) - summary["files_processed"] - summary["files_skipped"],
+                    summary["files_skipped"])
+    return success_response(data={"files": files, "summary": summary},
+                            message=f"Generated tests for {summary['files_processed']} files")
 
 
 @app.post("/repositories/{repository_id}/execute-tests")
@@ -720,42 +892,61 @@ def execute_repository_tests(repository_id: str, request: RepositoryExecutionReq
     if metadata is None:
         return error_response("not_found", f"Repository '{repository_id}' not found")
 
-    project_name = _make_repo_project_name(repository_id, request.selected_file)
+    selected_files = request.selected_files
+    if not selected_files:
+        return error_response("validation_error", "At least one file must be selected.")
+
+    test_cases_map = request.test_cases_map
+    if test_cases_map is None and request.test_cases is not None:
+        test_cases_map = {selected_files[0]: request.test_cases}
+
+    if test_cases_map is None:
+        return error_response("validation_error", "No test cases provided.")
+
+    for fpath in selected_files:
+        if fpath not in test_cases_map:
+            return error_response("validation_error", f"No test cases provided for '{fpath}'.")
+
+    project_name = _make_repo_project_name(repository_id, selected_files)
     ws.create_project(project_name, "repository")
 
-    tc = request.test_cases
-    ws.save_file(project_name, "generated_tests.json", json.dumps({
-        "functional": tc.functional,
-        "edge_cases": tc.edge_cases,
-        "security": tc.security,
-    }, indent=2))
+    files = []
+    for fpath in selected_files:
+        try:
+            tc = test_cases_map[fpath]
 
-    server_log.info("Executing tests for '%s' in repository '%s'", request.selected_file, repository_id)
+            server_log.info("Executing tests for '%s' in repository '%s'", fpath, repository_id)
+            start = time.time()
+            execution_result = execute_test_cases(tc.functional, tc.edge_cases, tc.security)
+            duration = time.time() - start
 
-    start = time.time()
-    execution_result = execute_test_cases(tc.functional, tc.edge_cases, tc.security)
-    duration = time.time() - start
+            server_log.info("Executed %d tests for '%s': %d passed, %d failed in %.2fs",
+                            execution_result["summary"]["total"], fpath,
+                            execution_result["summary"]["passed"],
+                            execution_result["summary"]["failed"], duration)
 
-    ws.save_file(project_name, "execution_result.json", json.dumps(execution_result, indent=2))
-    _update_stats_from_execution(project_name, execution_result, duration)
+            files.append({
+                "selected_file": fpath,
+                "test_cases": {"functional": tc.functional, "edge_cases": tc.edge_cases, "security": tc.security},
+                "execution_result": execution_result,
+                "status": "success",
+            })
+        except Exception as e:
+            server_log.error("Test execution failed for '%s': %s", fpath, e)
+            files.append({"selected_file": fpath, "status": "error", "error": str(e)})
+
+    merged = _merge_execution_results(files)
+    ws.save_file(project_name, "generated_tests.json", json.dumps(merged, indent=2))
+    ws.save_file(project_name, "execution_result.json", json.dumps(merged, indent=2))
+    _update_stats_from_execution(project_name, merged, 0.0)
     ws.add_timeline_entry(project_name, {
         "step": "Execute Tests",
         "status": "completed",
-        "duration": f"{duration:.2f} sec",
     })
 
-    server_log.info(
-        "Executed %d tests for '%s': %d passed, %d failed in %.2fs",
-        execution_result["summary"]["total"],
-        request.selected_file,
-        execution_result["summary"]["passed"],
-        execution_result["summary"]["failed"],
-        duration,
-    )
-    return success_response(data={
-        "selected_file": request.selected_file,
-        "execution_result": execution_result,
-    }, message=f"Executed {execution_result['summary']['total']} tests")
+    summary = _compute_execution_summary(files)
+    return success_response(data={"files": files, "summary": summary},
+                            message=f"Executed tests for {summary['files_processed']} files")
 
 
 @app.post("/repositories/{repository_id}/generate-report")
@@ -764,18 +955,51 @@ def generate_repository_report(repository_id: str, request: RepositoryReportRequ
     if metadata is None:
         return error_response("not_found", f"Repository '{repository_id}' not found")
 
-    project_name = _make_repo_project_name(repository_id, request.selected_file)
+    selected_files = request.selected_files
+    if not selected_files:
+        return error_response("validation_error", "At least one file must be selected.")
 
-    existing_exec = ws.load_file(project_name, "execution_result.json")
-    if existing_exec is None:
-        return error_response("not_found", "No execution results found. Execute tests first.")
+    project_name = _make_repo_project_name(repository_id, selected_files)
 
-    execution_result = json.loads(existing_exec)
-    server_log.info("Generating report for '%s' in repository '%s'", request.selected_file, repository_id)
+    execution_results = request.execution_results
 
-    start = time.time()
-    report_text = generate_text_report(execution_result)
-    duration = time.time() - start
+    if execution_results is None:
+        if len(selected_files) == 1:
+            existing_exec = ws.load_file(project_name, "execution_result.json")
+            if existing_exec is None:
+                return error_response("not_found", "No execution results found. Execute tests first.")
+            exec_data = json.loads(existing_exec)
+            files = [{
+                "selected_file": selected_files[0],
+                "test_cases": None,
+                "execution_result": exec_data,
+                "status": "success",
+            }]
+            summary = _compute_execution_summary(files)
+            server_log.info("Generating report for '%s' in repository '%s'", selected_files[0], repository_id)
+            start = time.time()
+            report_text = generate_text_report(exec_data)
+            duration = time.time() - start
+        else:
+            return error_response("validation_error", "Execution results are required for multi-file report generation.")
+    else:
+        files = []
+        for fpath in selected_files:
+            er = execution_results.get(fpath)
+            if er:
+                files.append({
+                    "selected_file": fpath,
+                    "test_cases": None,
+                    "execution_result": er,
+                    "status": "success",
+                })
+            else:
+                files.append({"selected_file": fpath, "status": "error", "error": "No execution result provided"})
+        summary = _compute_execution_summary(files)
+        server_log.info("Generating combined report for %d files in repository '%s'", len(selected_files), repository_id)
+        start = time.time()
+        report_text = generate_combined_repository_report(files, summary)
+        duration = time.time() - start
 
     ws.save_file(project_name, "report.txt", report_text)
     ws.update_metadata(project_name, {
@@ -789,9 +1013,10 @@ def generate_repository_report(repository_id: str, request: RepositoryReportRequ
         "duration": f"{duration:.2f} sec",
     })
 
-    server_log.info("Generated report for '%s' in %.2fs", request.selected_file, duration)
+    server_log.info("Generated report for %d files in %.2fs", len(selected_files), duration)
     return success_response(data={
-        "selected_file": request.selected_file,
+        "files": files,
+        "summary": summary,
         "report": report_text,
     }, message="Report generated")
 
@@ -802,7 +1027,7 @@ def download_repository_report(repository_id: str, selected_file: str):
     if metadata is None:
         return error_response("not_found", f"Repository '{repository_id}' not found")
 
-    project_name = _make_repo_project_name(repository_id, selected_file)
+    project_name = _make_repo_project_name(repository_id, [selected_file])
     report_path = ws.get_project_dir(project_name) / "report.txt"
     if not report_path.exists():
         return error_response("not_found", "No report found. Generate a report first.")
